@@ -31,7 +31,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.1.38"
           cache: true
 
       - name: Setup Java
@@ -101,7 +101,8 @@ jobs:
           alias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          build-tools-version: "34.0.0"
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
 
       - name: Prepare signed APK for release
         id: set_version
