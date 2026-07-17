@@ -650,8 +650,8 @@ function ReminderSettingsSection() {
                 <div
                   key={s.id}
                   className={`flex items-center justify-between gap-2 rounded-lg border p-2.5 transition-colors ${s.enabled
-                      ? 'border-base-300'
-                      : 'border-base-300/50 opacity-60'
+                    ? 'border-base-300'
+                    : 'border-base-300/50 opacity-60'
                     }`}
                 >
                   <div className="min-w-0 flex-1">
@@ -810,7 +810,7 @@ function ToleranceNotificationSettingsSection() {
         {/* Trigger settings */}
         <div className="space-y-3">
           <h4 className="text-xs font-medium text-neutral-content uppercase tracking-wide">Notify when tolerance reaches</h4>
-          
+
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <div>
               <p className="text-sm font-medium">High / Very High</p>
@@ -928,8 +928,20 @@ function ToleranceNotificationSettingsSection() {
             className="gap-1"
             onClick={async () => {
               const { forceToleranceCheck } = await import('@/lib/tolerance-notifications')
-              await forceToleranceCheck()
-              toast({ title: 'Test check triggered' })
+              const result = await forceToleranceCheck()
+              if (result.sent) {
+                const names = result.triggered.map((t) => `${t.substanceName} (${t.pct}%)`).join(', ')
+                toast({
+                  title: `Tolerance notification sent (${result.triggered.length})`,
+                  description: names,
+                })
+              } else {
+                toast({
+                  title: 'No notification sent',
+                  description: result.reason || 'Nothing triggered.',
+                  variant: 'destructive',
+                })
+              }
             }}
           >
             <Play className="h-3.5 w-3.5" />

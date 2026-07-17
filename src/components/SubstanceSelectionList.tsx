@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { CheckSquare, Square } from 'lucide-react';
+import { CheckSquare, Square, X } from 'lucide-react';
 import { useToleranceNotificationStore } from '@/store/tolerance-notification-store';
 import { getAllSubstances, type Substance } from '@/lib/substances';
 import { Button } from '@/components/ui/button';
@@ -47,6 +47,24 @@ export function SubstanceSelectionList() {
 
   const allSubstances = useMemo(() => getAllSubstances(), []);
 
+  const substanceById = useMemo(() => {
+    const map: Record<string, Substance> = {};
+    for (const s of allSubstances) map[s.id] = s;
+    return map;
+  }, [allSubstances]);
+
+  // Selected substances — every entry in enabledSubstances that is `true`.
+  // These are the substances the user has opted into tolerance notifications
+  // for. We render them as removable chips ABOVE the search box so the user
+  // can see and deselect them without having to search.
+  const selectedSubstances = useMemo(() => {
+    return Object.entries(settings.enabledSubstances)
+      .filter(([, enabled]) => enabled === true)
+      .map(([id]) => substanceById[id])
+      .filter((s): s is Substance => !!s)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [settings.enabledSubstances, substanceById]);
+
   const grouped = useMemo(() => {
     const groups: Record<string, Substance[]> = {};
     for (const s of allSubstances) {
@@ -81,6 +99,27 @@ export function SubstanceSelectionList() {
     updateSettings({
       enabledSubstances: { ...settings.enabledSubstances, [id]: !settings.enabledSubstances[id] },
     });
+  };
+
+  // Remove a substance from the enabled map entirely (so it doesn't show up
+  // as a chip anymore). Also clears any per-substance threshold override so
+  // we don't leave orphan keys around.
+  const removeSubstance = (id: string) => {
+    const nextEnabled = { ...settings.enabledSubstances };
+    delete nextEnabled[id];
+    const nextThresholds = { ...settings.substanceThresholds };
+    delete nextThresholds[id];
+    updateSettings({
+      enabledSubstances: nextEnabled,
+      substanceThresholds: nextThresholds,
+    } as Partial<typeof settings>);
+  };
+
+  const clearAllSelected = () => {
+    if (selectedSubstances.length === 0) return;
+    const nextEnabled = { ...settings.enabledSubstances };
+    for (const s of selectedSubstances) delete nextEnabled[s.id];
+    updateSettings({ enabledSubstances: nextEnabled });
   };
 
   const getOverrideValue = (
@@ -148,6 +187,52 @@ export function SubstanceSelectionList() {
 
   return (
     <div className="space-y-4">
+      {/* Selected substances — chips above the search box.
+          Each chip shows the substance name with an X to deselect.
+          This makes it easy to review and remove selections without
+          having to search for them again. */}
+      {selectedSubstances.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h5 className="text-xs font-medium text-neutral-content uppercase tracking-wide">
+              Selected ({selectedSubstances.length})
+            </h5>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={clearAllSelected}
+            >
+              Clear all
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {selectedSubstances.map((s) => (
+              <span
+                key={s.id}
+                className="inline-flex items-center gap-1.5 rounded-full bg-base-200 border border-base-300 pl-2.5 pr-1 py-1 text-sm"
+              >
+                <span
+                  className={cn(
+                    'w-2 h-2 rounded-full shrink-0',
+                    CATEGORY_DOTS[s.categories[0]] || 'bg-zinc-500'
+                  )}
+                />
+                <span className="truncate max-w-[160px]">{s.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${s.name}`}
+                  onClick={() => removeSubstance(s.id)}
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full hover:bg-base-300 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <Input
         placeholder="Search substances..."
         value={searchQuery}

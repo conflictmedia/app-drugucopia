@@ -35,8 +35,42 @@ describe('SubstanceSelectionList', () => {
     render(<SubstanceSelectionList />);
     expect(screen.getByText('Stimulants')).toBeInTheDocument();
     expect(screen.getByText('Empathogens')).toBeInTheDocument();
-    expect(screen.getByText('Caffeine')).toBeInTheDocument();
+    // Caffeine is enabled in the default mock, so it appears both as a
+    // selected-substance chip AND as a row in the Stimulants group.
+    expect(screen.getAllByText('Caffeine').length).toBeGreaterThan(0);
     expect(screen.getByText('MDMA')).toBeInTheDocument();
+  });
+
+  it('shows selected substances as removable chips above the search box', () => {
+    // Caffeine is enabled in the default beforeEach mock — chip should render.
+    render(<SubstanceSelectionList />);
+    expect(screen.getByLabelText('Remove Caffeine')).toBeInTheDocument();
+    expect(screen.getByText(/Selected \(1\)/)).toBeInTheDocument();
+  });
+
+  it('removes a substance from enabledSubstances when its chip X is clicked', () => {
+    const updateSettings = vi.fn();
+    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+      settings: {
+        enabled: true,
+        notifyOnHigh: true,
+        notifyOnLow: false,
+        notifyOnBaseline: false,
+        notificationCooldownMinutes: 1440,
+        checkIntervalMinutes: 1440,
+        enabledSubstances: { caffeine: true, mdma: true },
+        substanceThresholds: { caffeine: { notifyOnHigh: false } },
+      },
+      updateSettings,
+      isLoaded: true,
+    });
+    render(<SubstanceSelectionList />);
+    fireEvent.click(screen.getByLabelText('Remove Caffeine'));
+    // Should delete the caffeine key entirely (not just flip to false)
+    expect(updateSettings).toHaveBeenCalledWith({
+      enabledSubstances: { mdma: true },
+      substanceThresholds: {},
+    });
   });
 
   it('shows checkbox checked for enabled substances', () => {
@@ -60,11 +94,13 @@ describe('SubstanceSelectionList', () => {
   it('filters substances by search query', () => {
     render(<SubstanceSelectionList />);
     fireEvent.change(screen.getByPlaceholderText('Search substances...'), { target: { value: 'caffeine' } });
-    expect(screen.getByText('Caffeine')).toBeInTheDocument();
+    // Caffeine is enabled (chip shown) and also matches the search query
+    // (list row shown), so it appears in two places.
+    expect(screen.getAllByText('Caffeine').length).toBeGreaterThan(0);
     expect(screen.queryByText('MDMA')).not.toBeInTheDocument();
   });
 
-it('shows override dropdowns when expanded', () => {
+  it('shows override dropdowns when expanded', () => {
     render(<SubstanceSelectionList />);
     // Expand caffeine specifically by clicking its expand button
     const caffeineLabel = screen.getByLabelText('Caffeine');
