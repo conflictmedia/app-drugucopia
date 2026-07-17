@@ -2,15 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
-import {
-  getFirestore,
-  type Firestore,
-  initializeFirestore,
-  doc,
-  onSnapshot,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore'
+import { getFirestore, type Firestore, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore'
 import { toast } from '../hooks/use-toast'
 import { useDoseStore } from '../store/dose-store'
 import { useReminderStore } from '../store/reminder-store'
@@ -71,28 +63,9 @@ function getDb(): Firestore | null {
   try {
     _app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
 
-    // Use initializeFirestore() instead of getFirestore() so we can pass
-    // experimentalAutoDetectLongPolling. Firebase defaults to WebSocket for
-    // onSnapshot, which is blocked by many corporate/cellular networks and
-    // some browser/CSP configurations — causing the 15s "sync connection
-    // timeout" with no error callback. Auto-detect falls back to HTTP
-    // long-polling when WebSocket fails or is unreachable.
-    try {
-      _db = initializeFirestore(_app, {
-        experimentalAutoDetectLongPolling: true,
-        // Don't force long-polling — let the SDK try WebSocket first, then
-        // fall back. Forcing long-polling adds ~100ms latency per snapshot.
-      })
-    } catch (initErr) {
-      // initializeFirestore throws if getFirestore was already called for
-      // this app (e.g. by HMR in dev). Fall back to getFirestore, which
-      // returns the existing instance.
-      console.debug('[sync] initializeFirestore fell back to getFirestore (likely HMR):', initErr)
-      _db = getFirestore(_app)
-    }
+    _db = getFirestore(_app)
     console.debug(
       '[sync] Firebase initialized successfully, project:', firebaseConfig.projectId,
-      'longPolling: auto-detect',
     )
     return _db
   } catch (e) {
