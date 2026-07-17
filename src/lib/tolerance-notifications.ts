@@ -147,7 +147,7 @@ function recordNotificationSent(key: string): void {
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
 
-async function checkAndNotify(force = false): Promise<void> {
+export async function checkAndNotify(force = false): Promise<void> {
   try {
     const settings = useToleranceNotificationStore.getState().settings;
 
@@ -205,9 +205,28 @@ async function checkAndNotify(force = false): Promise<void> {
     const tolerance = estimateTolerance(doses);
     if (tolerance.length === 0) return;
 
-    const { notifyOnHigh, notifyOnLow, notifyOnBaseline, notificationCooldownMinutes } = settings;
+    const { notifyOnHigh, notifyOnLow, notifyOnBaseline, notificationCooldownMinutes, enabledSubstances, substanceThresholds } = settings;
 
     for (const t of tolerance) {
+      // Resolve substance ID for per-substance settings lookup
+      const substanceId = getSubstanceId(t.substanceName);
+      if (!substanceId) {
+        console.log(`[tolerance-notif] Unknown substance "${t.substanceName}", skipping`);
+        continue;
+      }
+
+      // Skip if substance explicitly disabled (default: enabled if not in map)
+      if (enabledSubstances[substanceId] === false) {
+        console.log(`[tolerance-notif] Substance ${substanceId} disabled, skipping`);
+        continue;
+      }
+
+      // Get effective thresholds: per-substance override || global setting
+      const override = substanceThresholds[substanceId];
+      const effectiveNotifyOnHigh = override?.notifyOnHigh ?? notifyOnHigh;
+      const effectiveNotifyOnLow = override?.notifyOnLow ?? notifyOnLow;
+      const effectiveNotifyOnBaseline = override?.notifyOnBaseline ?? notifyOnBaseline;
+
       const key = substanceKey(t.substanceName);
       const level = t.level;
       const isHigh = level === "high" || level === "very-high";
@@ -215,9 +234,9 @@ async function checkAndNotify(force = false): Promise<void> {
       const isBaseline = level === "baseline";
 
       const shouldNotify =
-        (notifyOnHigh && isHigh) ||
-        (notifyOnLow && isLow) ||
-        (notifyOnBaseline && isBaseline);
+        (effectiveNotifyOnHigh && isHigh) ||
+        (effectiveNotifyOnLow && isLow) ||
+        (effectiveNotifyOnBaseline && isBaseline);
 
       if (!shouldNotify) continue;
 

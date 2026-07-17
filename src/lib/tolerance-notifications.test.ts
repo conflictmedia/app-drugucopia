@@ -3,7 +3,20 @@ import { estimateTolerance, toleranceHalfLifeDays } from '@/lib/analytics'
 import { DoseLog } from '@/types'
 import { DEFAULT_TOLERANCE_HALF_LIFE_DAYS } from '@/lib/analytics/tolerance-half-lives'
 import { getAllSubstances } from '@/lib/substances'
-import { getSubstanceId } from '@/lib/tolerance-notifications'
+import { getSubstanceId, checkAndNotify } from '@/lib/tolerance-notifications'
+import { useToleranceNotificationStore } from '@/store/tolerance-notification-store'
+import { useDoseStore } from '@/store/dose-store'
+import { DEFAULT_SETTINGS } from '@/store/tolerance-notification-store'
+
+// Mock tauri-bridge to allow notifications in tests
+vi.mock('@/lib/tauri-bridge', () => ({
+  isTauri: () => false,
+  checkNotificationPermission: vi.fn().mockResolvedValue('granted'),
+  requestNotificationPermission: vi.fn().mockResolvedValue('granted'),
+  sendGenericNotification: vi.fn().mockResolvedValue(undefined),
+  sendToleranceNotification: vi.fn().mockResolvedValue(undefined),
+  ensureNotificationPermission: vi.fn().mockResolvedValue(true),
+}))
 
 const createDose = (overrides: Partial<DoseLog> = {}): DoseLog => ({
   id: `dose_${Date.now()}_${Math.random()}`,
@@ -289,3 +302,129 @@ describe('getSubstanceId helper', () => {
     expect(getSubstanceId(`\t${commonName}\n`)).toBe('mdma')
   })
 })
+
+describe('checkAndNotify per-substance logic', () => {
+  beforeEach(async () => {
+    // Mock localStorage for dose store
+    const mockStorage: Record<string, string> = {};
+    global.localStorage = {
+      getItem: vi.fn((key: string) => mockStorage[key] ?? null),
+      setItem: vi.fn((key: string, value: string) => { mockStorage[key] = value; }),
+      removeItem: vi.fn((key: string) => { delete mockStorage[key]; }),
+      clear: vi.fn(() => { Object.keys(mockStorage).forEach(k => delete mockStorage[k]); }),
+    } as unknown as Storage;
+
+    // Reset stores with zero cooldown to avoid cooldown issues in tests
+    useToleranceNotificationStore.setState({
+      settings: { ...DEFAULT_SETTINGS, notificationCooldownMinutes: 0 },
+      isLoaded: true,
+      initialize: () => () => {},
+      updateSettings: () => {},
+    });
+    useDoseStore.setState({ doses: [], isLoaded: true });
+    
+    vi.useFakeTimers();
+    vi.resetModules();
+    
+    // Re-import modules after reset
+    const mod = await import('@/lib/tolerance-notifications');
+    global.checkAndNotify = mod.checkAndNotify;
+    const storeMod = await import('@/store/tolerance-notification-store');
+    global.useToleranceNotificationStore = storeMod.useToleranceNotificationStore;
+    const doseStoreMod = await import('@/store/dose-store');
+    global.useDoseStore = doseStoreMod.useDoseStore;
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('skips substance not in enabledSubstances', async () => {
+    global.useToleranceNotificationStore.getState().updateSettings({
+      enabled: true,
+      notifyOnHigh: true,
+      enabledSubstances: { caffeine: false }, // explicitly disabled
+      substanceThresholds: {},
+    });
+    
+    // Add caffeine dose that would trigger high tolerance
+    global.useDoseStore.getState().addDose(createDose({ substanceName: 'Caffeine', amount: 200, unit: 'mg', timestamp: new Date().toISOString() }));
+    
+    const calls: unknown[][] = [];
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      calls.push(args);
+    });
+    await global.checkAndNotify(true);
+    
+    // Should not send notification for caffeine
+    const caffeineCalls = calls.filter(call => 
+      call.some(arg => typeof arg === 'string' && arg.includes('Caffeine'))
+    );
+    expect(caffeineCalls).toHaveLength(0);
+  });
+
+  it('uses global threshold when no override', async () => {
+    global.useToleranceNotificationStore.getState().updateSettings({
+      enabled: true,
+      notifyOnHigh: true,
+      notifyOnLow: false,
+      enabledSubstances: { caffeine: true },
+      substanceThresholds: {}, // no override
+    });
+    
+    global.useDoseStore.getState().addDose(createDose({ substanceName: 'Caffeine', amount: 200, unit: 'mg', timestamp: new Date().toISOString() }));
+    
+    const calls: unknown[][] = [];
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      calls.push(args);
+    });
+    await global.checkAndNotify(true);
+    
+    const caffeineCalls = calls.filter(call => 
+      call.some(arg => typeof arg === 'string' && arg.includes('Caffeine'))
+    );
+    expect(caffeineCalls.length).toBeGreaterThan(0);
+  });
+
+  it('uses override when notifyOnHigh=false for substance', async () => {
+    global.useToleranceNotificationStore.getState().updateSettings({
+      enabled: true,
+      notifyOnHigh: true, // global says yes
+      enabledSubstances: { caffeine: true },
+      substanceThresholds: { caffeine: { notifyOnHigh: false } }, // override says no
+    });
+    
+    global.useDoseStore.getState().addDose(createDose({ substanceName: 'Caffeine', amount: 200, unit: 'mg', timestamp: new Date().toISOString() }));
+    
+    const calls: unknown[][] = [];
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      calls.push(args);
+    });
+    await global.checkAndNotify(true);
+    
+    const caffeineCalls = calls.filter(call => 
+      call.some(arg => typeof arg === 'string' && arg.includes('Caffeine'))
+    );
+    expect(caffeineCalls).toHaveLength(0);
+  });
+
+  it('uses override when notifyOnHigh=true for substance but global=false', async () => {
+    global.useToleranceNotificationStore.getState().updateSettings({
+      enabled: true,
+      notifyOnHigh: false, // global says no
+      enabledSubstances: { caffeine: true },
+      substanceThresholds: { caffeine: { notifyOnHigh: true } }, // override says yes
+    });
+    
+    global.useDoseStore.getState().addDose(createDose({ substanceName: 'Caffeine', amount: 200, unit: 'mg', timestamp: new Date().toISOString() }));
+    
+    const calls: unknown[][] = [];
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      calls.push(args);
+    });
+    await global.checkAndNotify(true);
+    
+    const caffeineCalls = calls.filter(call => 
+      call.some(arg => typeof arg === 'string' && arg.includes('Caffeine'))
+    );
+    expect(caffeineCalls.length).toBeGreaterThan(0);
+  });
+});
