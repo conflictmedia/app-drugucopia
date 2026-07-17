@@ -27,7 +27,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: "1.1.38"
+          bun-version: "1.3.14"
           cache: true
 
       - name: Setup Java
@@ -60,6 +60,38 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Verify Firebase env vars are present
+        run: |
+          echo "Checking Firebase env vars..."
+          if [ -z "$NEXT_PUBLIC_FIREBASE_API_KEY" ]; then
+            echo "::warning:: NEXT_PUBLIC_FIREBASE_API_KEY is missing - Firebase sync will be broken! Check repository secrets."
+          else
+            echo "NEXT_PUBLIC_FIREBASE_API_KEY is set (length ${#NEXT_PUBLIC_FIREBASE_API_KEY})"
+          fi
+          if [ -z "$NEXT_PUBLIC_FIREBASE_PROJECT_ID" ]; then
+            echo "::warning:: NEXT_PUBLIC_FIREBASE_PROJECT_ID is missing"
+          else
+            echo "NEXT_PUBLIC_FIREBASE_PROJECT_ID=$NEXT_PUBLIC_FIREBASE_PROJECT_ID"
+          fi
+          # List which are present (don't print values for security, just presence)
+          for var in NEXT_PUBLIC_FIREBASE_API_KEY NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN NEXT_PUBLIC_FIREBASE_PROJECT_ID NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID NEXT_PUBLIC_FIREBASE_APP_ID; do
+            if [ -z "${!var}" ]; then
+              echo "$var=MISSING"
+            else
+              echo "$var=present"
+            fi
+          done
+
+      - name: Build Next.js (for Android)
+        run: bun run build
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
 
       - name: Setup sccache
         uses: Mozilla-Actions/sccache-action@v0.0.10

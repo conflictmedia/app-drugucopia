@@ -5,6 +5,7 @@
 #   - Dark status bar matching the app theme (#0a0a0a)
 #   - Transparent status bar so content can extend behind it
 #   - Proper safe area inset handling
+#   - Ensures INTERNET permission for Firebase sync (critical for release builds)
 #
 # Run this once after `tauri android init`:
 #   bash scripts/patch-android.sh
@@ -40,9 +41,27 @@ info "Installing OngoingNotificationHelper.kt to $KOTLIN_SRC"
 cp "$SCRIPT_DIR/android-ongoing-notif/OngoingNotificationHelper.kt" "$KOTLIN_SRC/"
 ok "Installed OngoingNotificationHelper.kt"
 
-# ─── 2. Patch AndroidManifest.xml for status bar color ────────────────────────
+# ─── 1b. Ensure INTERNET permission exists (critical for Firebase on Android)
 MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
 
+if [ -f "$MANIFEST" ]; then
+  if ! grep -q "android.permission.INTERNET" "$MANIFEST"; then
+    info "Adding INTERNET permission to AndroidManifest.xml"
+    # Insert INTERNET permission before <application>
+    sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET" \/>\n    <application/' "$MANIFEST"
+    ok "Added INTERNET permission"
+  else
+    ok "INTERNET permission already present"
+  fi
+
+  if ! grep -q "android.permission.ACCESS_NETWORK_STATE" "$MANIFEST"; then
+    info "Adding ACCESS_NETWORK_STATE permission"
+    sed -i 's/<uses-permission android:name="android.permission.INTERNET" \/>/<uses-permission android:name="android.permission.INTERNET" \/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" \/>/' "$MANIFEST"
+    ok "Added ACCESS_NETWORK_STATE permission"
+  fi
+fi
+
+# ─── 2. Patch AndroidManifest.xml for status bar color ────────────────────────
 if [ -f "$MANIFEST" ]; then
   if ! grep -q "android.statusbar.color" "$MANIFEST"; then
     sed -i '/<application/,/>/ {
@@ -99,6 +118,7 @@ echo "  Installed:"
 echo "    • OngoingNotificationHelper.kt (unswipeable notifications)"
 echo "    • Dark status/nav bar theme"
 echo "    • Edge-to-edge display mode"
+echo "    • INTERNET + ACCESS_NETWORK_STATE permissions (Firebase)"
 echo ""
 echo "  Next step: npm run tauri:android:dev"
 echo ""

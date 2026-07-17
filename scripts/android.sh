@@ -33,11 +33,24 @@ NC='\033[0m'
 
 info() { echo -e "${CYAN}[android]${NC} $*"; }
 ok()   { echo -e "${GREEN}[android]${NC} $*"; }
-die()  { echo -e "${RED}[android]${NC} $*" >&2; exit 1; }
+die()  { echo -e "${RED}[android]${NC} $*\" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUST_TARGETS=(aarch64-linux-android armv7-linux-androideabi)
+
+# ─── 0. Cleanup stale machine-specific cargo config (fixes GitHub Actions builds) ───
+# This file should NEVER be committed - it contains absolute NDK paths from the
+# developer's machine (e.g. /home/conflift/Android/Sdk/...). If present, it breaks
+# CI builds where that path doesn't exist. The android.sh script uses env vars for linkers.
+STALE_CARGO_CONFIG="$PROJECT_ROOT/src-tauri/.cargo/config.toml"
+if [ -f "$STALE_CARGO_CONFIG" ]; then
+  info "Removing stale machine-specific cargo config: $STALE_CARGO_CONFIG"
+  rm -f "$STALE_CARGO_CONFIG"
+  # Remove parent dir if empty
+  rmdir "$PROJECT_ROOT/src-tauri/.cargo" 2>/dev/null || true
+  ok "Removed stale cargo config (linkers now via env vars)"
+fi
 
 # ─── 1. Find Android NDK ─────────────────────────────────────────────────────
 info "Looking for Android NDK..."
@@ -174,9 +187,40 @@ if [ -d "$GEN_ANDROID_DIR" ]; then
 fi
 
 # Initialize Android project if needed
+NEW_INIT=0
 if [ ! -d "$GEN_ANDROID_DIR" ]; then
   info "Initializing Android project for $EXPECTED_IDENTIFIER..."
   npx tauri android init --config "$CONFIG_FILE"
+  NEW_INIT=1
+fi
+
+# Always apply Android patches after init (ensures INTERNET permission for Firebase, dark theme, etc)
+if [ -f "$PROJECT_ROOT/scripts/patch-android.sh" ]; then
+  if [ "$NEW_INIT" = "1" ] || [ ! -f "$GEN_ANDROID_DIR/app/src/main/res/values/styles.xml" ]; then
+    info "Applying Android patches (INTERNET permission, theme, etc)..."
+    bash "$PROJECT_ROOT/scripts/patch-android.sh" || info "Patch script failed, continuing anyway"
+  fi
+fi
+
+# Verify Firebase env vars for release builds
+if [ "$ACTION" = "build" ]; then
+  info "Checking Firebase env vars for build..."
+  MISSING=0
+  for var in NEXT_PUBLIC_FIREBASE_API_KEY NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN NEXT_PUBLIC_FIREBASE_PROJECT_ID NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID NEXT_PUBLIC_FIREBASE_APP_ID; do
+    if [ -z "${!var:-}" ]; then
+      echo -e "${RED}[android] WARNING: $var is missing - Firebase sync will be BROKEN in this APK!${NC}" >&2
+      MISSING=1
+    fi
+  done
+  if [ "$MISSING" = "1" ]; then
+    echo -e "${RED}[android] Some Firebase env vars missing! Check GitHub secrets.${NC}" >&2
+    if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+      echo -e "${RED}[android] In GitHub Actions this will produce a broken build. Failing.${NC}" >&2
+      # Don't fail the build entirely, but warn heavily. The next.config.ts will also warn.
+    fi
+  else
+    ok "All Firebase env vars present"
+  fi
 fi
 
 case "$ACTION" in
