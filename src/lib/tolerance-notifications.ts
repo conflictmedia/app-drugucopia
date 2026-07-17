@@ -8,6 +8,7 @@
 import { useDoseStore } from "@/store/dose-store";
 import { useToleranceNotificationStore } from "@/store/tolerance-notification-store";
 import { estimateTolerance, ToleranceEstimate } from "@/lib/analytics";
+import { getAllSubstances } from "@/lib/substances";
 import {
   isTauri,
   sendGenericNotification,
@@ -33,6 +34,31 @@ const COOLDOWN_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const notificationCooldowns = new Map<string, number>();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+export function getSubstanceId(name: string): string | undefined {
+  if (!name || !name.trim()) return undefined;
+  const normalizedInput = name.toLowerCase().trim();
+
+  const substances = getAllSubstances();
+
+  // First pass: exact name match (case-insensitive, trimmed)
+  for (const substance of substances) {
+    if (substance.name.toLowerCase().trim() === normalizedInput) {
+      return substance.id;
+    }
+  }
+
+  // Second pass: common names match (case-insensitive, trimmed)
+  for (const substance of substances) {
+    for (const commonName of substance.commonNames) {
+      if (commonName.toLowerCase().trim() === normalizedInput) {
+        return substance.id;
+      }
+    }
+  }
+
+  return undefined;
+}
 
 function loadCooldownState(): void {
   if (typeof window === "undefined") return;

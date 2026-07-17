@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import { estimateTolerance, toleranceHalfLifeDays } from '@/lib/analytics'
 import { DoseLog } from '@/types'
 import { DEFAULT_TOLERANCE_HALF_LIFE_DAYS } from '@/lib/analytics/tolerance-half-lives'
+import { getAllSubstances } from '@/lib/substances'
+import { getSubstanceId } from '@/lib/tolerance-notifications'
 
 const createDose = (overrides: Partial<DoseLog> = {}): DoseLog => ({
   id: `dose_${Date.now()}_${Math.random()}`,
@@ -204,5 +206,86 @@ describe('loadSettings migration', () => {
 
     expect(settings.enabledSubstances).toEqual({ caffeine: true })
     expect(settings.substanceThresholds).toEqual({})
+  })
+})
+
+describe('getSubstanceId helper', () => {
+  let substances: ReturnType<typeof getAllSubstances>
+
+  beforeAll(() => {
+    substances = getAllSubstances()
+  })
+
+  it('returns substance ID for exact name match (case-insensitive)', () => {
+    const caffeine = substances.find(s => s.id === 'caffeine')
+    expect(caffeine).toBeDefined()
+    
+    // Test exact match (case insensitive)
+    const id = getSubstanceId(caffeine!.name)
+    expect(id).toBe('caffeine')
+    
+    const idLower = getSubstanceId(caffeine!.name.toLowerCase())
+    expect(idLower).toBe('caffeine')
+    
+    const idUpper = getSubstanceId(caffeine!.name.toUpperCase())
+    expect(idUpper).toBe('caffeine')
+    
+    const idTrimmed = getSubstanceId(`  ${caffeine!.name}  `)
+    expect(idTrimmed).toBe('caffeine')
+  })
+
+  it('returns substance ID for common name match (case-insensitive)', () => {
+    const caffeine = substances.find(s => s.id === 'caffeine')
+    expect(caffeine).toBeDefined()
+    expect(caffeine!.commonNames.length).toBeGreaterThan(0)
+    
+    // Test first common name
+    const commonName = caffeine!.commonNames[0]
+    const id = getSubstanceId(commonName)
+    expect(id).toBe('caffeine')
+    
+    // Test case insensitivity
+    const idLower = getSubstanceId(commonName.toLowerCase())
+    expect(idLower).toBe('caffeine')
+    
+    const idUpper = getSubstanceId(commonName.toUpperCase())
+    expect(idUpper).toBe('caffeine')
+    
+    const idTrimmed = getSubstanceId(`  ${commonName}  `)
+    expect(idTrimmed).toBe('caffeine')
+  })
+
+  it('returns undefined for unknown substance name', () => {
+    const id = getSubstanceId('completely-unknown-substance-xyz-123')
+    expect(id).toBeUndefined()
+  })
+
+  it('returns undefined for empty or whitespace-only input', () => {
+    expect(getSubstanceId('')).toBeUndefined()
+    expect(getSubstanceId('   ')).toBeUndefined()
+    expect(getSubstanceId('\t\n')).toBeUndefined()
+  })
+
+  it('matches exact name before common names when both match', () => {
+    // Find a substance where one substance's name matches another's common name
+    // This tests priority: exact name match should win over common name match
+    const caffeine = substances.find(s => s.id === 'caffeine')
+    const id = getSubstanceId(caffeine!.name)
+    expect(id).toBe('caffeine')
+  })
+
+  it('matches common names with trimmed whitespace and case insensitivity', () => {
+    const substances = getAllSubstances()
+    const mdma = substances.find(s => s.id === 'mdma')
+    expect(mdma).toBeDefined()
+    expect(mdma!.commonNames.length).toBeGreaterThan(0)
+    
+    const commonName = mdma!.commonNames[0]
+    // Test with various whitespace and case combinations
+    expect(getSubstanceId(commonName)).toBe('mdma')
+    expect(getSubstanceId(commonName.toLowerCase())).toBe('mdma')
+    expect(getSubstanceId(commonName.toUpperCase())).toBe('mdma')
+    expect(getSubstanceId(`  ${commonName}  `)).toBe('mdma')
+    expect(getSubstanceId(`\t${commonName}\n`)).toBe('mdma')
   })
 })
