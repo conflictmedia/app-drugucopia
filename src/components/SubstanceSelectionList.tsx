@@ -36,6 +36,10 @@ const OVERRIDE_OPTIONS: OverrideOption[] = [
   { value: 'off', label: 'Off' },
 ];
 
+function normalizeQuery(str: string): string {
+  return str.toLowerCase().replace(/[-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function SubstanceSelectionList() {
   const { settings, updateSettings, isLoaded } = useToleranceNotificationStore();
   const [searchQuery, setSearchQuery] = useState('');
@@ -55,14 +59,14 @@ export function SubstanceSelectionList() {
 
   const filteredGroups = useMemo(() => {
     if (!searchQuery.trim()) return grouped;
-    const q = searchQuery.toLowerCase().trim();
+    const q = normalizeQuery(searchQuery);
     const filtered: Record<string, Substance[]> = {};
     for (const [cat, subs] of Object.entries(grouped)) {
       const matches = subs.filter(
         (s) =>
-          s.name.toLowerCase().includes(q) ||
-          s.commonNames?.some((cn) => cn.toLowerCase().includes(q)) ||
-          s.id.toLowerCase().includes(q)
+          normalizeQuery(s.name).includes(q) ||
+          s.commonNames?.some((cn) => normalizeQuery(cn).includes(q)) ||
+          normalizeQuery(s.id).includes(q)
       );
       if (matches.length) filtered[cat] = matches;
     }
@@ -129,13 +133,18 @@ export function SubstanceSelectionList() {
   const categoryLabel = (cat: string) =>
     cat.charAt(0).toUpperCase() + cat.slice(1).replace(/-/g, ' ');
 
-  if (Object.keys(filteredGroups).length === 0 && searchQuery.trim()) {
-    return (
-      <div className="text-center py-4 text-neutral-content/50">
-        No substances match &ldquo;{searchQuery}&rdquo;
-      </div>
-    );
-  }
+  // Sort substances: enabled first, then by name
+  const sortSubstances = (subs: Substance[]) => {
+    return [...subs].sort((a, b) => {
+      const aEnabled = settings.enabledSubstances[a.id] ?? false;
+      const bEnabled = settings.enabledSubstances[b.id] ?? false;
+      if (aEnabled !== bEnabled) return bEnabled ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  };
+
+  // Render "no matches" but keep search input
+  const noMatches = Object.keys(filteredGroups).length === 0 && searchQuery.trim();
 
   return (
     <div className="space-y-4">
@@ -158,26 +167,32 @@ export function SubstanceSelectionList() {
         </Button>
       )}
 
-      {Object.entries(filteredGroups).map(([cat, subs]) => (
-        <div key={cat} className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h5 className="font-medium capitalize">{categoryLabel(cat)}</h5>
-          </div>
-
-          {subs.map((s) => (
-            <SubstanceRow
-              key={s.id}
-              substance={s}
-              enabled={settings.enabledSubstances[s.id] ?? false}
-              onToggle={toggleSubstance}
-              expanded={expandedIds.has(s.id)}
-              onToggleExpanded={toggleExpanded}
-              getOverrideValue={getOverrideValue}
-              onSetOverride={setOverride}
-            />
-          ))}
+      {noMatches ? (
+        <div className="text-center py-4 text-neutral-content/50">
+          No substances match &ldquo;{searchQuery}&rdquo;
         </div>
-      ))}
+      ) : (
+        Object.entries(filteredGroups).map(([cat, subs]) => (
+          <div key={cat} className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h5 className="font-medium capitalize">{categoryLabel(cat)}</h5>
+            </div>
+
+            {sortSubstances(subs).map((s) => (
+              <SubstanceRow
+                key={s.id}
+                substance={s}
+                enabled={settings.enabledSubstances[s.id] ?? false}
+                onToggle={toggleSubstance}
+                expanded={expandedIds.has(s.id)}
+                onToggleExpanded={toggleExpanded}
+                getOverrideValue={getOverrideValue}
+                onSetOverride={setOverride}
+              />
+            ))}
+          </div>
+        ))
+      )}
     </div>
   );
 }
