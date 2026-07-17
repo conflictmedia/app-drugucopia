@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.1] - 2026-07-17
+
+### Fixed
+- Github Workflow wasn't compiling with the env variables needed for sync to function properly.
+
 ## [0.2.0] - 2026-07-17
 
 ### Changed
