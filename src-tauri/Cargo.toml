@@ -1,6 +1,6 @@
 [package]
 name = "drugucopia"
-version = "0.1.9"
+version = "0.2.0"
 description = "Drugucopia - Dose Logger and Substance Resources"
 authors = ["conflictmedia"]
 edition = "2021"

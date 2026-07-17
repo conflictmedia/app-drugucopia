@@ -7,10 +7,9 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { DurationInput } from '@/components/ui/duration-input'
 import {
   Bell,
   BellOff,
@@ -22,7 +21,6 @@ import {
 } from 'lucide-react'
 import { useTimelineNotificationStore } from '@/store/timeline-notification-store'
 import { toast } from '@/hooks/use-toast'
-import { cn } from '@/lib/utils'
 
 export function TimelineNotificationSettings() {
   const {
@@ -129,11 +127,12 @@ export function TimelineNotificationSettings() {
 
         {/* ── Notification cooldown ── */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="pt-1">
               <p className="text-sm font-medium">Notification cooldown</p>
               <p className="text-xs text-neutral-content">
-                Minimum time between notifications for the same substance
+                Minimum time between notifications for the same substance.
+                Accepts formats like <span className="font-mono">5m, 5min, 5 minutes, 1h, 1 hour</span>.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -146,14 +145,16 @@ export function TimelineNotificationSettings() {
               >
                 <span className="text-base">−</span>
               </Button>
-              <Input
-                type="number"
+              <DurationInput
                 value={settings.notificationCooldownMinutes}
-                onChange={(e) => handleCooldownChange(parseInt(e.target.value) || 1)}
                 min={1}
                 max={60}
-                className="w-20 text-center text-sm"
+                fallback={5}
+                onChange={(minutes) => handleCooldownChange(minutes)}
                 disabled={!settings.enabled}
+                wrapperClassName=""
+                className="w-24 text-center text-sm"
+                aria-label="Notification cooldown"
               />
               <Button
                 variant="outline"

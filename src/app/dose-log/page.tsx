@@ -3,7 +3,7 @@
 import { Suspense, useMemo, useState, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
-import { Bell, Activity, History, BarChart3, RotateCcw } from 'lucide-react'
+import { Bell, Activity, History, BarChart3 } from 'lucide-react'
 import { useDoseStore } from '@/store/dose-store'
 import { useReminderStore } from '@/store/reminder-store'
 import { PullToRefresh } from '@/components/ui/PullToRefresh'
@@ -33,14 +33,10 @@ const SyncConflicts = dynamic(
   () => import('@/components/sync-conflicts').then((m) => m.SyncConflicts),
   { ssr: false, loading: () => null },
 )
-const TimelineNotificationSettings = dynamic(
-  () => import('@/components/timeline-notification-settings').then((m) => m.TimelineNotificationSettings),
-  { ssr: false, loading: () => null },
-)
 
 // ─── Tab model ─────────────────────────────────────────────────────────────
 
-type TrackTab = 'session' | 'history' | 'reminders' | 'timeline-notifications' | 'insights'
+type TrackTab = 'session' | 'history' | 'reminders' | 'insights'
 
 interface TabDef {
   id: TrackTab
@@ -52,7 +48,6 @@ const TABS: TabDef[] = [
   { id: 'session', label: 'Active Session', icon: Activity },
   { id: 'history', label: 'History', icon: History },
   { id: 'reminders', label: 'Reminders', icon: Bell },
-  { id: 'timeline-notifications', label: 'Timeline Notifications', icon: RotateCcw },
   { id: 'insights', label: 'Insights', icon: BarChart3 },
 ]
 
@@ -191,29 +186,6 @@ function RemindersTab() {
   )
 }
 
-// ─── Timeline Notifications tab ────────────────────────────────────────────
-
-function TimelineNotificationsTab() {
-  return (
-    <div className="space-y-6">
-      <section className="card border border-base-300 bg-base-100 shadow-sm">
-        <div className="card-body gap-1.5 p-4 pb-0 md:p-5 md:pb-0">
-          <h2 className="card-title text-base font-semibold">
-            <RotateCcw className="h-5 w-5 text-purple-500" />
-            Timeline Notifications
-          </h2>
-          <p className="text-sm text-neutral-content">
-            Configure live timeline notifications for active doses — reappear behavior, cooldown, and spam protection.
-          </p>
-        </div>
-        <div className="card-body p-4 pt-4 md:p-5 md:pt-4">
-          <TimelineNotificationSettings />
-        </div>
-      </section>
-    </div>
-  )
-}
-
 // ─── Insights tab ──────────────────────────────────────────────────────────
 
 function InsightsTab() {
@@ -259,7 +231,6 @@ function DoseLogPageContent() {
             {tab === 'session' && <ActiveSessionTab />}
             {tab === 'history' && <DoseHistory />}
             {tab === 'reminders' && <RemindersTab />}
-            {tab === 'timeline-notifications' && <TimelineNotificationsTab />}
             {tab === 'insights' && <InsightsTab />}
           </div>
         </div>
