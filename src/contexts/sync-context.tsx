@@ -19,6 +19,34 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 }
 
+// Helper to check which Firebase env vars are missing at runtime
+function getMissingFirebaseKeys(): string[] {
+  const required: (keyof typeof firebaseConfig)[] = [
+    'apiKey',
+    'authDomain',
+    'projectId',
+    'storageBucket',
+    'messagingSenderId',
+    'appId',
+  ]
+  return required.filter((k) => !firebaseConfig[k])
+}
+
+export function isFirebaseConfigured(): boolean {
+  return getMissingFirebaseKeys().length === 0
+}
+
+export function getFirebaseConfigDebug(): Record<string, boolean> {
+  return {
+    apiKey: !!firebaseConfig.apiKey,
+    authDomain: !!firebaseConfig.authDomain,
+    projectId: !!firebaseConfig.projectId,
+    storageBucket: !!firebaseConfig.storageBucket,
+    messagingSenderId: !!firebaseConfig.messagingSenderId,
+    appId: !!firebaseConfig.appId,
+  }
+}
+
 // Lazy-initialize Firebase so the app doesn't crash if env vars are missing.
 // getDb() returns null when Firebase can't be initialized, and every caller
 // checks for null before proceeding — no TypeScript "Firestore | null" error.
@@ -27,13 +55,18 @@ let _db: Firestore | null = null
 
 function getDb(): Firestore | null {
   if (_db) return _db
-  if (!firebaseConfig.apiKey) return null
+  const missing = getMissingFirebaseKeys()
+  if (missing.length > 0) {
+    console.warn('[sync] Firebase misconfigured - missing:', missing.join(', '), 'config present:', getFirebaseConfigDebug())
+    return null
+  }
   try {
     _app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
     _db = getFirestore(_app)
+    console.debug('[sync] Firebase initialized successfully, project:', firebaseConfig.projectId)
     return _db
-  } catch {
-    console.warn('Firebase initialization failed')
+  } catch (e) {
+    console.warn('Firebase initialization failed', e, 'config presence:', getFirebaseConfigDebug())
     return null
   }
 }
@@ -868,6 +901,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     medicationsLoaded,
   ])
 
+  // Timeout guard to prevent endless "connecting" - if Firestore never calls back (no network, bad config, blocked CSP etc)
+  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const connectToSync = useCallback(async (rId?: string, pass?: string) => {
     const effectiveRId = rId ?? roomIdRef.current
     const effectivePass = pass ?? passwordRef.current
@@ -880,6 +916,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     if (unsubscribeRef.current) {
       unsubscribeRef.current()
       unsubscribeRef.current = null
+    }
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current)
+      connectTimeoutRef.current = null
     }
 
     setSyncStatus('connecting')
@@ -894,8 +934,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
       const db = getDb()
       if (!db) {
+        const missing = getMissingFirebaseKeys()
+        const debug = getFirebaseConfigDebug()
+        console.error('[sync] Firebase not configured, missing:', missing, 'present:', debug)
         setSyncStatus('error')
-        toast({ title: 'Sync Unavailable', description: 'Firebase is not configured. Check your environment variables.', variant: 'destructive' })
+        toast({
+          title: 'Sync Unavailable',
+          description: missing.length
+            ? `Missing Firebase config: ${missing.join(', ')}. This build was created without Firebase env vars. Check GitHub Actions secrets and rebuild. Presence: ${Object.entries(debug).map(([k, v]) => `${k}=${v ? 'ok' : 'MISSING'}`).join(', ')}`
+            : 'Firebase is not configured. Check your environment variables.',
+          variant: 'destructive',
+        })
         return
       }
 
@@ -1134,8 +1183,36 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // Clear any previous timeout
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
+      }
+
+      // Timeout: if Firestore doesn't respond within 15s (network blocked, bad config, CSP, offline), show error instead of endless connecting
+      connectTimeoutRef.current = setTimeout(() => {
+        if (syncStatusRef.current === 'connecting' && !initialSyncDoneRef.current) {
+          const missing = getMissingFirebaseKeys()
+          const debug = getFirebaseConfigDebug()
+          console.error('[sync] Connection timeout after 15s - no snapshot received. Firebase present:', debug, 'missing:', missing)
+          setSyncStatus('error')
+          toast({
+            title: 'Sync connection timeout',
+            description: missing.length > 0
+              ? `Build missing Firebase config (${missing.join(', ')}). Rebuild with env vars from GitHub secrets.`
+              : `No response from Firestore after 15s. Check internet, Firestore rules, and CSP. Project: ${firebaseConfig.projectId || 'unknown'}`,
+            variant: 'destructive',
+          })
+        }
+      }, 15000)
+
       unsubscribeRef.current = onSnapshot(docRef, {
         next: async (docSnap) => {
+          // First successful snapshot - clear timeout
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current)
+            connectTimeoutRef.current = null
+          }
           console.debug('[sync] snapshot received:', {
             exists: docSnap.exists(),
             isPushing: isPushingRef.current,
@@ -1151,6 +1228,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           processSnapshot(docSnap)
         },
         error: (err) => {
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current)
+            connectTimeoutRef.current = null
+          }
           console.error('[sync] Firestore snapshot error:', err)
           setSyncStatus('error')
           toast({ title: 'Sync Error', description: `Lost connection: ${err.message.substring(0, 100)}`, variant: 'destructive' })
@@ -1163,8 +1244,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // Firestore rules deny access (the onSnapshot error callback would
       // then fire and set 'error', but the user would have already seen
       // "Secure Sync Active" momentarily).
-      setSyncStatus('connecting')
+      // Status already set to 'connecting' at start, with timeout guard above
     } catch (error) {
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
+      }
       console.error('Sync connection error:', error)
       setSyncStatus('error')
     }
@@ -1186,6 +1271,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const disconnectSync = useCallback(() => {
     if (unsubscribeRef.current) unsubscribeRef.current()
     unsubscribeRef.current = null
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current)
+      connectTimeoutRef.current = null
+    }
     cryptoKeyRef.current = null
     hashedRoomRef.current = null
     lastPushedHashRef.current = null
