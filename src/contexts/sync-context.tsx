@@ -78,8 +78,7 @@ function getDb(): Firestore | null {
     // default transport in browsers and desktop web builds.
     _db = isTauri()
       ? initializeFirestore(_app, {
-          experimentalForceLongPolling: true,
-          useFetchStreams: false,
+          experimentalAutoDetectLongPolling: true,
         })
       : getFirestore(_app)
     console.debug(
