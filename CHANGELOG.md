@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8] - 2026-07-16
+
+### Added
+- Tolerance reminder notifications, configurable in Settings page accessible via the sidebar
+
+### Changed
+- Moved dose reminder settings into the Settings page
+
 ## [0.1.7] - 2026-07-15
 
 ### Fixed
