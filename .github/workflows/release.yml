@@ -31,7 +31,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.1.38"
           cache: true
 
       - name: Setup Java
@@ -62,7 +62,11 @@ jobs:
           shared-key: android-r27c-arm
           cache-on-failure: true
 
-      - name: Install build-tools 29.0.3 (for signing - zipalign)
+      - name: Install build-tools 34.0.0 (for apksigner - PKCS12 support)
+        run: |
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0"
+
+      - name: Install build-tools 29.0.3 (for zipalign)
         run: |
           ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "build-tools;29.0.3"
 
@@ -73,7 +77,9 @@ jobs:
         run: bun run build
 
       - name: Setup sccache
-        uses: Mozilla-Actions/sccache-action@v0.0.6
+        uses: Mozilla-Actions/sccache-action@v0.0.10
+        with:
+          version: "v0.16.0"
 
       - name: Build Android APK
         run: bash scripts/android.sh build --ci
@@ -81,6 +87,7 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
           RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: "true"
           
       - name: Find APK/AAB output
         run: |
@@ -97,6 +104,8 @@ jobs:
           alias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "34.0.0"
 
       - name: Prepare signed APK for release
         id: set_version
@@ -153,7 +162,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.build-android.outputs.VERSION || '1.0.0' }}
           name: Release v${{ needs.build-android.outputs.VERSION || '1.0.0' }}
