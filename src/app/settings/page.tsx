@@ -28,6 +28,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useToleranceNotificationStore } from '@/store/tolerance-notification-store'
 import { SubstanceSelectionList } from '@/components/SubstanceSelectionList'
+import { DurationInput } from '@/components/ui/duration-input'
+import { TimelineNotificationSettings } from '@/components/timeline-notification-settings'
 
 // ─── Category dots (matches Header & dose-logger-modal) ─────────────────────
 const CATEGORY_DOTS: Record<string, string> = {
@@ -869,41 +871,41 @@ function ToleranceNotificationSettingsSection() {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Notification cooldown</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min={1}
-                max={10080}
-                value={settings.notificationCooldownMinutes}
-                onChange={(e) =>
-                  updateSettings({ notificationCooldownMinutes: parseInt(e.target.value) || 1 })
-                }
-                className="w-24"
-              />
-              <span className="text-sm text-neutral-content">minutes (1–10080)</span>
-            </div>
+            <DurationInput
+              value={settings.notificationCooldownMinutes}
+              min={1}
+              max={10080}
+              fallback={1440}
+              onChange={(minutes) =>
+                updateSettings({ notificationCooldownMinutes: minutes })
+              }
+              wrapperClassName=""
+              className="w-40"
+              placeholder="e.g. 24h, 1 day, 1440m"
+            />
             <p className="text-xs text-neutral-content">
-              Minimum time between notifications for the same substance. Default: 1440 min (24 hours).
+              Minimum time between notifications for the same substance. Accepts formats like
+              <span className="font-mono"> 1h, 1hr, 1 hour, 1h 30m, 1:30, 90m, 1 day</span>. Range: 1–10080 minutes (1 week). Default: 24 hours.
             </p>
           </div>
 
           <div className="space-y-2">
             <Label>Check interval</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                type="number"
-                min={15}
-                max={10080}
-                value={settings.checkIntervalMinutes}
-                onChange={(e) =>
-                  updateSettings({ checkIntervalMinutes: parseInt(e.target.value) || 15 })
-                }
-                className="w-24"
-              />
-              <span className="text-sm text-neutral-content">minutes (15–10080)</span>
-            </div>
+            <DurationInput
+              value={settings.checkIntervalMinutes}
+              min={15}
+              max={10080}
+              fallback={1440}
+              onChange={(minutes) =>
+                updateSettings({ checkIntervalMinutes: minutes })
+              }
+              wrapperClassName=""
+              className="w-40"
+              placeholder="e.g. 24h, 1 day, 1440m"
+            />
             <p className="text-xs text-neutral-content">
-              How often to check tolerance levels. Default: 1440 min (24 hours).
+              How often to check tolerance levels. Accepts formats like
+              <span className="font-mono"> 1h, 1hr, 1 hour, 1h 30m, 1:30, 90m, 1 day</span>. Range: 15–10080 minutes (1 week). Default: 24 hours.
             </p>
           </div>
         </div>
@@ -968,6 +970,7 @@ export default function SettingsPage() {
       <div className="space-y-6">
         <ReminderSettingsSection />
         <ToleranceNotificationSettingsSection />
+        <TimelineNotificationSettings />
       </div>
     </div>
   )

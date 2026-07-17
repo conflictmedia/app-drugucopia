@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.0] - 2026-07-17
+
+### Changed
+- Duration input for tolerance notifications now able to be hours or minutes.
+- Moved timeline notifications into Settings.
+
 ## [0.1.9] - 2026-07-17
 
 ### Added
