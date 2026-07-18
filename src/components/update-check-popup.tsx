@@ -9,7 +9,7 @@ import { isTauri } from '@/lib/tauri-bridge'
 const STORAGE_KEY = 'drugucopia-last-checked-version'
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
-const GITHUB_REPO = 'conflictmedia/drugucopia-app'
+const GITHUB_REPO = 'drugucopia/app-drugucopia'
 const GITHUB_RELEASES_URL = `https://github.com/${GITHUB_REPO}/releases`
 const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 
