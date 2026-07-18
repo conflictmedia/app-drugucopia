@@ -1,5 +1,9 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+*.idsig
+*.rules
+b64
+
 # dependencies
 <<<<<<< HEAD
 /node_modules
@@ -20,6 +24,8 @@ node_modules
 /coverage
 
 *.jks
+
+scripts/sign-and-copy-apk.sh
 
 *.apk
 
