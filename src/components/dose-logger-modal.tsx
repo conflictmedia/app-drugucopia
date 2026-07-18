@@ -656,7 +656,8 @@ function highlightMatch(text: string, query: string) {
 // Avoids rebuilding the full 380+ substance list on every render.
 // Recomputes only when custom substances or medications actually change.
 // Uses getState() to read stores without subscribing (no re-renders).
-let substanceOptionsCache: { options: ComboboxOption[]; customCount: number; medCount: number } | null = null
+const builtinSubstanceById = new Map(substances.map((substance) => [substance.id, substance]))
+let substanceOptionsCache: { options: ComboboxOption[]; signature: string } | null = null
 
 export function getSubstanceOptions(): ComboboxOption[] {
   // Guard against SSR - stores use localStorage which isn't available on server
@@ -674,13 +675,17 @@ export function getSubstanceOptions(): ComboboxOption[] {
   const medications = useMedicationStore.getState().medications
   const activeMedications = medications.filter(m => m.isActive)
 
-  const customCount = customSubstances.length
-  const medCount = activeMedications.length
+  // Counts alone miss renames, dosage edits, and alias/category changes. A
+  // compact content signature preserves the cache without serving stale options.
+  const signature = JSON.stringify({
+    custom: customSubstances.map((substance) => [substance.id, substance.name, substance.category]),
+    medications: activeMedications.map((medication) => [
+      medication.id, medication.name, medication.dosage, medication.genericName,
+      medication.medicationType, medication.linkedSubstanceId,
+    ]),
+  })
 
-  // Return cached if nothing changed
-  if (substanceOptionsCache && substanceOptionsCache.customCount === customCount && substanceOptionsCache.medCount === medCount) {
-    return substanceOptionsCache.options
-  }
+  if (substanceOptionsCache?.signature === signature) return substanceOptionsCache.options
 
   const builtinIds = new Set(substances.map(s => s.id))
   const opts: ComboboxOption[] = []
@@ -706,7 +711,7 @@ export function getSubstanceOptions(): ComboboxOption[] {
 
   // Active medications
   for (const m of activeMedications) {
-    if (m.linkedSubstanceId && builtinIds.has(m.linkedSubstanceId) && m.name === substances.find(s => s.id === m.linkedSubstanceId)?.name) {
+    if (m.linkedSubstanceId && builtinIds.has(m.linkedSubstanceId) && m.name === builtinSubstanceById.get(m.linkedSubstanceId)?.name) {
       continue
     }
     const id = toMedicationSelectorId(m.id)
@@ -719,7 +724,7 @@ export function getSubstanceOptions(): ComboboxOption[] {
   }
 
   const sorted = opts.sort((a, b) => a.label.localeCompare(b.label))
-  substanceOptionsCache = { options: sorted, customCount, medCount }
+  substanceOptionsCache = { options: sorted, signature }
   return sorted
 }
 
@@ -1220,22 +1225,22 @@ export function DoseLoggerModal({
     return result.pairs.filter(p => p.severity !== 'low-risk')
   }, [selectedSubstance, activeMedications])
 
-/**
-   * Substance selector options.
-   *
-   * Combines four sources, each tagged so the UI can render a badge:
-   *   - Built-in substances (no tag — the default)
-   *   - Custom substances from the custom-substance store (tagged `[Custom]`)
-   *   - Active medications from the medication profile (namespaced
-   *     with `med-<uuid>`, tagged `[Rx]`)
-   *
-   * The Combobox component doesn't natively support per-option badges,
-   * so we encode the kind in the label: medications get a `[Rx]` prefix
-   * and custom substances get a `[Custom]` prefix. The search box still
-   * matches against the underlying name.
-   *
-   * Uses module-level memoized getter to avoid rebuilding on every render.
-   */
+  /**
+     * Substance selector options.
+     *
+     * Combines four sources, each tagged so the UI can render a badge:
+     *   - Built-in substances (no tag — the default)
+     *   - Custom substances from the custom-substance store (tagged `[Custom]`)
+     *   - Active medications from the medication profile (namespaced
+     *     with `med-<uuid>`, tagged `[Rx]`)
+     *
+     * The Combobox component doesn't natively support per-option badges,
+     * so we encode the kind in the label: medications get a `[Rx]` prefix
+     * and custom substances get a `[Custom]` prefix. The search box still
+     * matches against the underlying name.
+     *
+     * Uses module-level memoized getter to avoid rebuilding on every render.
+     */
   const substanceOptions: ComboboxOption[] = getSubstanceOptions()
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
