@@ -44,7 +44,7 @@ type ConflictStrategy = 'skip' | 'overwrite'
 
 // Keep history rendering bounded. The full filtered collection remains available
 // to export/import and filtering, but only this many rows are mounted at once.
-const HISTORY_PAGE_SIZE = 35
+const HISTORY_PAGE_SIZE = 25
 
 // Catalog lookups used to run once per rendered row via `substances.find(...)`.
 // Build immutable indexes once so a large history stays O(rows shown).
@@ -1465,7 +1465,7 @@ export function DoseHistory() {
                         size="sm"
                         onClick={() => setVisibleCount((count) => count + HISTORY_PAGE_SIZE)}
                       >
-                        Load 75 more
+                        Load 25 more
                       </Button>
                     </div>
                   )}
