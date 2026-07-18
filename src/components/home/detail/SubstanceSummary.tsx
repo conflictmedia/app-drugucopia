@@ -10,19 +10,13 @@ import {
   getPrimaryCategory,
   getSubstanceCategories,
 } from '../home-utils'
-import dynamic from 'next/dynamic'
 import { cn } from '@/lib/utils'
-
-const DoseLoggerModal = dynamic(
-  () => import('@/components/dose-logger-modal').then((mod) => mod.DoseLoggerModal),
-  { ssr: false, loading: () => null }
-)
+import { useUIStore } from '@/store/ui-store'
 
 interface SubstanceSummaryProps {
   substance: Substance
   selectedRoute: string | null
   onBack: () => void
-  onDoseLogged: () => void
   onCategoryClick?: (category: SubstanceCategory) => void
 }
 
@@ -44,10 +38,19 @@ export function SubstanceSummary({
   substance,
   selectedRoute,
   onBack,
-  onDoseLogged,
   onCategoryClick,
 }: SubstanceSummaryProps) {
   const primary = getPrimaryCategory(substance)
+  const openDoseLogger = useUIStore((state) => state.openDoseLogger)
+
+  const handleLogDose = () => {
+    openDoseLogger({
+      substanceId: substance.id,
+      substanceName: substance.name,
+      category: getSubstanceCategories(substance),
+      route: selectedRoute || undefined,
+    })
+  }
 
   return (
     <section className="card border border-base-300/70 bg-base-100/70 backdrop-blur-sm shadow-sm">
@@ -115,19 +118,10 @@ export function SubstanceSummary({
             </span>
           </div>
 
-          <DoseLoggerModal
-            preselectedSubstanceId={substance.id}
-            preselectedSubstanceName={substance.name}
-            preselectedCategory={getSubstanceCategories(substance)}
-            preselectedRoute={selectedRoute || undefined}
-            onLogCreated={onDoseLogged}
-            trigger={
-              <button type="button" className="btn btn-primary btn-sm gap-2">
-                <Plus className="h-4 w-4" />
-                Log Dose
-              </button>
-            }
-          />
+          <button type="button" className="btn btn-primary btn-sm gap-2" onClick={handleLogDose}>
+            <Plus className="h-4 w-4" />
+            Log Dose
+          </button>
         </div>
       </div>
     </section>
