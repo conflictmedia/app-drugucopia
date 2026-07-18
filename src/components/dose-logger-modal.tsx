@@ -796,6 +796,8 @@ export function DoseLoggerModal({
 
   const [durationOverride, setDurationOverride] = useState<Duration | null>(null)
 
+  const [alcoholConversion, setAlcoholConversion] = useState<string | null>(null)
+
   useEffect(() => {
     if (preselectedSubstanceId) setSubstanceId(preselectedSubstanceId)
     if (preselectedSubstanceName) setSubstanceName(preselectedSubstanceName)
@@ -1814,8 +1816,18 @@ export function DoseLoggerModal({
         {selectedSubstance?.id === "alcohol" && (unit === "shot" || unit === "drink") && (
           <AlcoholCalculatorFields
             amount={amount}
-            onAmountChange={setAmount}
-            onUnitChange={setUnit}
+            onAmountChange={(val) => {
+              setAmount(val)
+            }}
+            onUnitChange={(val) => {
+              setUnit(val)
+            }}
+            onConverted={(drinks, drinkUnit, grams) => {
+              toast({
+                title: 'Converted to grams',
+                description: `${drinks} ${drinkUnit} = ${grams}g pure ethanol`,
+              })
+            }}
           />
         )}
 
