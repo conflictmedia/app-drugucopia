@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { Wine, Scale, Beaker, Info, ArrowRightLeft } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { toast } from '@/hooks/use-toast'
 import {
   SHOT_SIZES,
   BEVERAGE_PRESETS,
@@ -43,6 +44,9 @@ export function AlcoholCalculatorFields({
   const [drinkCount, setDrinkCount] = useState(() => amount ? parseFloat(amount) || 2 : 2)
   const [drinkUnit, setDrinkUnit] = useState<'shots' | 'drinks'>('shots')
 
+  // Track if we've shown the auto-convert toast to avoid spamming
+  const toastShownRef = useRef(false)
+
   // ─── Derived values ────────────────────────────────────────────────────────
   const beveragePreset = useMemo(() => getBeveragePreset(beverageId), [beverageId])
   const shotSize = useMemo(() => getShotSize(shotSizeId), [shotSizeId])
@@ -60,8 +64,15 @@ export function AlcoholCalculatorFields({
       const roundedGrams = roundTo(conversionResult.ethanolGrams, 2)
       onAmountChange(String(roundedGrams))
       onUnitChange('g')
+      if (!toastShownRef.current) {
+        toastShownRef.current = true
+        toast({
+          title: 'Converted to grams',
+          description: `${drinkCount} ${drinkUnit} = ${roundedGrams}g pure ethanol`,
+        })
+      }
     }
-  }, [conversionResult, drinkCount, onAmountChange, onUnitChange])
+  }, [conversionResult, drinkCount, drinkUnit, onAmountChange, onUnitChange])
 
   // ─── Handle drink count change ────────────────────────────────────────────
   const handleDrinkCountChange = (value: number) => {
