@@ -317,9 +317,10 @@ function PhaseSparkline({
 function computeGroups(doses: ReturnType<typeof useDoseStore.getState>['doses']): SubstanceGroup[] {
   const now = Date.now()
   // Phase calculation/classification is much more expensive than a timestamp
-  // check. Keep a generous recent window, and retain older records only when
-  // their declared duration could still put them on the live timeline.
-  const RECENT_CANDIDATE_WINDOW_MINS = 7 * 24 * 60
+  // check. A duration range is parsed as its midpoint, so retain up to twice
+  // its declared total (the maximum possible range endpoint), plus a one-day
+  // safety floor for incomplete/custom data.
+  const MIN_CANDIDATE_WINDOW_MINS = 24 * 60
 
   // Step 1: filter + enrich
   const baseDoses: EnrichedDose[] = doses
@@ -328,8 +329,8 @@ function computeGroups(doses: ReturnType<typeof useDoseStore.getState>['doses'])
       const totalMins = parseDurationToMinutes(d.duration.total ?? '')
       if (totalMins <= 0) return false
       const elapsedMins = (now - safeDate(d.timestamp).getTime()) / 60_000
-      return elapsedMins < RECENT_CANDIDATE_WINDOW_MINS ||
-        elapsedMins < totalMins + ENDED_DOSE_RETENTION_MINS
+      const candidateWindow = Math.max(MIN_CANDIDATE_WINDOW_MINS, totalMins * 2)
+      return elapsedMins < candidateWindow + ENDED_DOSE_RETENTION_MINS
     })
     .map(d => {
       const doseTime = safeDate(d.timestamp)
