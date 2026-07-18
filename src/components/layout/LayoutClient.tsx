@@ -2,6 +2,7 @@
 
 import { AlertTriangle } from 'lucide-react'
 import { useState, useEffect, useSyncExternalStore, type ReactNode } from 'react'
+import dynamic from 'next/dynamic'
 import { AppSidebar } from './AppSidebar'
 import { TopBar } from './TopBar'
 import { BottomNav } from './BottomNav'
@@ -11,10 +12,14 @@ import { MilkdropBackgroundWrapper } from '@/components/milkdrop-background-wrap
 import { SyncProvider } from '@/contexts/sync-context'
 import { ReminderProvider } from '@/components/reminder-provider'
 import { CommandPalette } from '@/components/command-palette'
-import { DoseLoggerModal } from '@/components/dose-logger-modal'
 import { OnboardingTour } from '@/components/onboarding-tour'
 import { UpdateCheckPopupWrapper } from '@/components/update-check-popup-wrapper'
 import { useUIStore } from '@/store/ui-store'
+
+const DoseLoggerModal = dynamic(
+  () => import('@/components/dose-logger-modal').then((mod) => mod.DoseLoggerModal),
+  { ssr: false, loading: () => null }
+)
 
 interface LayoutClientProps {
   children: ReactNode

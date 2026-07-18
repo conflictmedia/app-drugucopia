@@ -10,8 +10,13 @@ import {
   getPrimaryCategory,
   getSubstanceCategories,
 } from '../home-utils'
-import { DoseLoggerModal } from '@/components/dose-logger-modal'
+import dynamic from 'next/dynamic'
 import { cn } from '@/lib/utils'
+
+const DoseLoggerModal = dynamic(
+  () => import('@/components/dose-logger-modal').then((mod) => mod.DoseLoggerModal),
+  { ssr: false, loading: () => null }
+)
 
 interface SubstanceSummaryProps {
   substance: Substance
