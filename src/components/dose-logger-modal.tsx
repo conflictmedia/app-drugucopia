@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Plus, Loader2, AlertTriangle, Zap, Clock, CalendarDays, X, ChevronDown, ChevronUp, Pin, PinOff, GripVertical, Pill } from 'lucide-react'
+import { Plus, Loader2, AlertTriangle, Zap, Clock, CalendarDays, X, ChevronDown, ChevronUp, Pin, PinOff, GripVertical, Pill, Scale } from 'lucide-react'
 import { substances, searchSubstancesRanked } from '@/lib/substances/index'
 import { useMedicationStore, getMedicationsAsSubstances, isMedicationSelectorId, getMedicationBySelectorId, toMedicationSelectorId } from '@/store/medication-store'
 import { useCustomSubstanceStore } from '@/store/custom-substance-store'
@@ -1823,12 +1823,19 @@ export function DoseLoggerModal({
               setUnit(val)
             }}
             onConverted={(drinks, drinkUnit, grams) => {
-              toast({
-                title: 'Converted to grams',
-                description: `${drinks} ${drinkUnit} = ${grams}g pure ethanol`,
-              })
+              setAlcoholConversion(`${drinks} ${drinkUnit} = ${grams}g pure ethanol`)
             }}
           />
+        )}
+
+        {alcoholConversion && (
+          <Alert className="bg-primary/5 text-primary border-primary/20">
+            <Scale className="h-4 w-4" />
+            <AlertTitle>Alcohol converted to grams</AlertTitle>
+            <AlertDescription>
+              {alcoholConversion}. Pure ethanol is tracked in grams for consistent dose logging and interaction checking.
+            </AlertDescription>
+          </Alert>
         )}
 
         <div className="grid gap-2">
