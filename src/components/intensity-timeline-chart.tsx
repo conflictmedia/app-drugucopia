@@ -21,7 +21,7 @@
  *   • Expandable per-dose phase details
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
+import { useState, useEffect, useMemo, useCallback, memo } from 'react'
 import { format } from 'date-fns'
 import Link from 'next/link'
 import {
@@ -499,7 +499,6 @@ export function IntensityTimelineChart() {
   const [nowTs, setNowTs] = useState(() => Date.now())
 
   useEffect(() => {
-    setNowTs(Date.now())
     const id = setInterval(() => setNowTs(Date.now()), 60_000)
     return () => clearInterval(id)
   }, [])
@@ -662,47 +661,30 @@ const GroupCard = memo(function GroupCard({
   group, getCategoryColor, selectedRoute, selectedDose,
   onRouteClick, onDoseClick, isExpanded, onToggleExpand, nowTs, windowHours,
 }: GroupCardProps) {
-  const [isMobile, setIsMobile] = useState(false)
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  )
   // mounted gate — prevents ResponsiveContainer from rendering before the
   // browser has computed the parent's layout (which triggers a 0×0 warning).
   const [mounted, setMounted] = useState(false)
 
-  const nowRef = useRef(nowTs)
-
-  // Keep nowRef.current in sync with nowTs prop
   useEffect(() => {
-    nowRef.current = nowTs
-  }, [nowTs])
-
-  // Sliding window override - updates every minute when windowHours is set
-  // This allows the X-axis domain to slide without recomputing chart data.
-  const [slidingWindowOverride, setSlidingWindowOverride] = useState<{ startMs: number; endMs: number } | null>(null)
-
-  useEffect(() => {
-    setMounted(true)
-    const check = () => setIsMobile(window.innerWidth < 768)
-    check()
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
+    const media = window.matchMedia('(max-width: 767px)')
+    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches)
+    const frame = requestAnimationFrame(() => setMounted(true))
+    media.addEventListener('change', onChange)
+    return () => {
+      cancelAnimationFrame(frame)
+      media.removeEventListener('change', onChange)
+    }
   }, [])
 
-  // Timer for sliding window - only runs when windowHours is set
-  useEffect(() => {
-    if (windowHours === null) {
-      setSlidingWindowOverride(null)
-      return
-    }
-    // Initial value
-    const updateWindow = () => {
-      const endMs = nowRef.current
-      const startMs = endMs - windowHours * 60 * 60 * 1000
-      setSlidingWindowOverride({ startMs, endMs })
-    }
-    updateWindow()
-    const id = setInterval(updateWindow, 60_000)
-    return () => clearInterval(id)
-  }, [windowHours])
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- setState in effect is intentional for timer
+  // The parent already ticks once per minute. Deriving the zoomed window from
+  // that tick avoids a second interval and a cascading state update per card.
+  const slidingWindowOverride = useMemo(() => windowHours === null ? null : ({
+    startMs: nowTs - windowHours * 60 * 60 * 1000,
+    endMs: nowTs,
+  }), [nowTs, windowHours])
 
   // Filter visible routes based on isolation
   const visibleRoutes: RouteGroup[] = useMemo(() => {
@@ -726,8 +708,8 @@ const GroupCard = memo(function GroupCard({
   // Window override: uses slidingWindowOverride when in zoom mode, null for auto-fit
   const windowOverride = slidingWindowOverride
 
-  // Chart config is stable - does NOT depend on nowTs.
-  // The now-indicator reads nowRef.current directly in JSX.
+  // Auto-fit chart data stays stable across minute ticks. A user-selected
+  // sliding window intentionally rebuilds once per minute as its domain moves.
   const config = useMemo(
     () => buildChartConfig(group, visibleRoutes, sampleCount, windowOverride),
     [group, visibleRoutes, sampleCount, windowOverride],
@@ -1221,16 +1203,15 @@ const GroupCard = memo(function GroupCard({
                     cursor={{ stroke: 'rgba(255,255,255,0.3)', strokeWidth: 1, strokeDasharray: '4 4' }}
                   />
 
-                  {/* Now indicator — position comes from nowRef.current, NOT from
+                  {/* Now indicator — position comes from nowTs, NOT from
                   config (which is memoized and stable across ticks).
                   The pulsing dot is rendered as a custom SVG label inside
                   the ReferenceLine so it's in the same coordinate space as
                   the dashed line (guarantees perfect horizontal alignment).
                   Uses SVG <animate> instead of CSS (4.2). */}
-                  {nowRef.current >= config.windowStartMs && nowRef.current <= config.windowEndMs && (
+                  {nowTs >= config.windowStartMs && nowTs <= config.windowEndMs && (
                     <ReferenceLine
-                      x={nowRef.current}
-                      // eslint-disable-next-line react-hooks/rules-of-hooks -- ref access in JSX is intentional for live now-indicator
+                      x={nowTs}
                       stroke={NOW_INDICATOR.color}
                       strokeWidth={NOW_INDICATOR.strokeWidth}
                       strokeDasharray={NOW_INDICATOR.dashArray}

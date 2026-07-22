@@ -43,18 +43,35 @@ type ImportResult =
 
 type ConflictStrategy = 'skip' | 'overwrite'
 
-// Keep history rendering bounded. The full filtered collection remains available
-// to export/import and filtering, but only this many rows are mounted at once.
-const HISTORY_PAGE_SIZE = 25
-
 // Catalog lookups used to run once per rendered row via `substances.find(...)`.
 // Build immutable indexes once so a large history stays O(rows shown).
 const substancesById = new Map(substances.map((substance) => [substance.id, substance]))
 const substancesByName = new Map(substances.map((substance) => [substance.name.toLowerCase(), substance]))
 
+const categoryNames = new Map(categories.map((category) => [category.id, category.name]))
+
 function getKnownSubstance(dose: DoseLog) {
   return (dose.substanceId ? substancesById.get(dose.substanceId) : undefined)
     ?? substancesByName.get(dose.substanceName.toLowerCase())
+}
+
+function getCategoryColor(category: string) {
+  return categoryColors[category as keyof typeof categoryColors]
+    || 'text-gray-500 bg-gray-500/10 border-gray-500/20'
+}
+
+function groupDosesByDate(doses: DoseLog[]) {
+  const groups: Record<string, DoseLog[]> = {}
+  for (const dose of doses) {
+    const date = new Date(dose.timestamp)
+    const key = isToday(date) ? 'Today'
+      : isYesterday(date) ? 'Yesterday'
+        : isThisWeek(date) ? 'This Week'
+          : isThisMonth(date) ? 'This Month'
+            : format(date, 'MMMM yyyy')
+      ; (groups[key] ??= []).push(dose)
+  }
+  return groups
 }
 
 // ─── Virtualized DoseRow ──────────────────────────────────────────────────
@@ -203,15 +220,6 @@ const DoseRow = memo(function DoseRow({
       )}
     </div>
   )
-}, (prev, next) => {
-  return (
-    prev.dose === next.dose &&
-    prev.dose.updatedAt === next.dose.updatedAt &&
-    prev.isDeleting === next.isDeleting &&
-    prev.isRedosing === next.isRedosing &&
-    prev.isInlineEditing === next.isInlineEditing &&
-    (prev.isInlineEditing === false || prev.inlineNotesDraft === next.inlineNotesDraft)
-  )
 })
 
 // ─── Virtualized DoseHistory List ─────────────────────────────────────────
@@ -255,8 +263,9 @@ function VirtualizedDoseHistory({
   const rowVirtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 220, // approximate row height in px
-    overscan: 5,
+    getItemKey: (index) => flatItems[index].key,
+    estimateSize: (index) => flatItems[index].type === 'header' ? 40 : 112,
+    overscan: 6,
   })
 
   const virtualItems = rowVirtualizer.getVirtualItems()
@@ -264,8 +273,11 @@ function VirtualizedDoseHistory({
   return (
     <div
       ref={parentRef}
-      className="overflow-y-auto max-h-[70vh]"
-      style={{ contain: 'strict', contentVisibility: 'auto' }}
+      className="overflow-y-auto"
+      style={{
+        contain: 'layout paint style',
+        height: `min(70vh, ${rowVirtualizer.getTotalSize()}px)`,
+      }}
     >
       <div
         style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}
@@ -276,6 +288,8 @@ function VirtualizedDoseHistory({
             return (
               <div
                 key={item.key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualItem.index}
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -283,9 +297,8 @@ function VirtualizedDoseHistory({
                   width: '100%',
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
-                className="mb-3 sticky top-0 z-10"
               >
-                <h4 className="text-sm font-medium text-neutral-content mb-3 bg-base-100 py-1 text-center">
+                <h4 className="text-sm font-medium text-neutral-content bg-base-100 py-1 pb-3 text-center">
                   {item.group}
                 </h4>
               </div>
@@ -293,9 +306,12 @@ function VirtualizedDoseHistory({
           }
           const dose = item.dose
           const knownSubstance = getKnownSubstance(dose)
+          const isInlineEditing = inlineEditingId === dose.id
           return (
             <div
               key={item.key}
+              ref={rowVirtualizer.measureElement}
+              data-index={virtualItem.index}
               style={{
                 position: 'absolute',
                 top: 0,
@@ -303,17 +319,17 @@ function VirtualizedDoseHistory({
                 width: '100%',
                 transform: `translateY(${virtualItem.start}px)`,
               }}
-              className="px-1"
+              className="px-1 pb-3"
             >
               <DoseRow
                 dose={dose}
                 isDeleting={deleting === dose.id}
                 isRedosing={redosing === dose.id}
-                isInlineEditing={inlineEditingId === dose.id}
-                inlineNotesDraft={inlineNotesDraft}
+                isInlineEditing={isInlineEditing}
+                inlineNotesDraft={isInlineEditing ? inlineNotesDraft : ''}
                 knownSubstance={knownSubstance}
                 categoryColor={getCategoryColor}
-                onEdit={(d) => setEditingDose(d)}
+                onEdit={setEditingDose}
                 onRedose={handleRedose}
                 onDelete={handleDelete}
                 onStartInlineEdit={startInlineEdit}
@@ -881,21 +897,6 @@ export function DoseHistory() {
   const psyloJsonInputRef = useRef<HTMLInputElement>(null)
   const pwjournalInputRef = useRef<HTMLInputElement>(null)
 
-  const groupDosesByDate = (doses: DoseLog[]) => {
-    const groups: { [key: string]: DoseLog[] } = {}
-    doses.forEach((dose) => {
-      const date = new Date(dose.timestamp)
-      const key = isToday(date) ? 'Today'
-        : isYesterday(date) ? 'Yesterday'
-          : isThisWeek(date) ? 'This Week'
-            : isThisMonth(date) ? 'This Month'
-              : format(date, 'MMMM yyyy')
-      if (!groups[key]) groups[key] = []
-      groups[key].push(dose)
-    })
-    return groups
-  }
-
   // A3 + A4 — apply search + date-range + category filter BEFORE grouping
   // so empty date groups naturally fall out of the render. Search is
   // case-insensitive and matches against the most user-meaningful fields.
@@ -950,7 +951,7 @@ export function DoseHistory() {
       .sort((a, b) => b[1] - a[1])
       .map(([id, count]) => ({
         id,
-        label: categories.find((c) => c.id === id)?.name || id,
+        label: categoryNames.get(id) || id,
         count,
       }))
   }, [doses])
@@ -965,16 +966,6 @@ export function DoseHistory() {
   }
 
   const groupedDoses = useMemo(() => groupDosesByDate(filteredDoses), [filteredDoses])
-
-  if (!isLoaded) {
-    return (
-      <Card>
-        <CardContent className="flex justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-neutral-content" />
-        </CardContent>
-      </Card>
-    )
-  }
 
   const triggerDownload = (content: string, filename: string, mimeType: string) => {
     const blob = new Blob([content], { type: mimeType })
@@ -1171,14 +1162,14 @@ export function DoseHistory() {
     setShowDeleteAllDialog(true)
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback((id: string) => {
     setDeleting(id)
     deleteDose(id)
     setDeleting(null)
     toast({ title: 'Dose deleted', description: 'The dose log has been removed.' })
-  }
+  }, [deleteDose])
 
-  const handleRedose = async (dose: DoseLog) => {
+  const handleRedose = useCallback(async (dose: DoseLog) => {
     setRedosing(dose.id)
     const now = new Date().toISOString()
     addDose({
@@ -1218,27 +1209,23 @@ export function DoseHistory() {
     } catch {
       // Reminder store may not be available — skip
     }
-  }
-
-  const getCategoryColor = (category: string) =>
-    categoryColors[category as keyof typeof categoryColors] ||
-    'text-gray-500 bg-gray-500/10 border-gray-500/20'
+  }, [addDose])
 
   // A6 — inline notes editing handlers. The inline editor saves on
   // blur, on Cmd/Ctrl+Enter, or on explicit Save click. Escape cancels.
   // Empty notes are stored as null so the row collapses back to the
   // "Add note" affordance.
-  const startInlineEdit = (dose: DoseLog) => {
+  const startInlineEdit = useCallback((dose: DoseLog) => {
     setInlineEditingId(dose.id)
     setInlineNotesDraft(dose.notes || '')
-  }
+  }, [])
 
-  const cancelInlineEdit = () => {
+  const cancelInlineEdit = useCallback(() => {
     setInlineEditingId(null)
     setInlineNotesDraft('')
-  }
+  }, [])
 
-  const saveInlineEdit = (dose: DoseLog) => {
+  const saveInlineEdit = useCallback((dose: DoseLog) => {
     const trimmed = inlineNotesDraft.trim()
     const nextNotes = trimmed === '' ? null : trimmed
     // Only write if it actually changed — avoids bumping updatedAt for no-op.
@@ -1256,6 +1243,16 @@ export function DoseHistory() {
       title: 'Note saved',
       description: trimmed === '' ? 'Note cleared.' : undefined,
     })
+  }, [cancelInlineEdit, inlineNotesDraft, updateDose])
+
+  if (!isLoaded) {
+    return (
+      <Card>
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-neutral-content" />
+        </CardContent>
+      </Card>
+    )
   }
 
   return (

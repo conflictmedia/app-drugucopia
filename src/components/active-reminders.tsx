@@ -20,30 +20,38 @@ export function ActiveReminders() {
   const snoozeReminder = useReminderStore((s) => s.snoozeReminder)
   const dismissAllFired = useReminderStore((s) => s.dismissAllFired)
 
-  // Force re-render only when the minute changes (not every second) to
-  // reduce CPU cost while keeping countdowns visually accurate.
-  const [tickMin, setTickMin] = useState(() => Math.floor(Date.now() / 60_000))
+  // Align updates to minute boundaries instead of polling four times/minute.
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const id = setInterval(() => {
-      const currentMin = Math.floor(Date.now() / 60_000)
-      setTickMin((prev) => (prev !== currentMin ? currentMin : prev))
-    }, 15_000) // check every 15s — plenty for minute-boundary updates
-    return () => clearInterval(id)
+    let intervalId: ReturnType<typeof setInterval> | undefined
+    const timeoutId = setTimeout(() => {
+      setNow(Date.now())
+      intervalId = setInterval(
+        () => setNow(Date.now()),
+        60_000,
+      )
+    }, 60_000 - (Date.now() % 60_000))
+    return () => {
+      clearTimeout(timeoutId)
+      if (intervalId) clearInterval(intervalId)
+    }
   }, [])
-
-  const now = Date.now()
 
   const running = useMemo(
     () => activeReminders.filter((r) => r.status === 'running'),
-    [activeReminders, tickMin],
+    [activeReminders],
   )
   const snoozed = useMemo(
     () => activeReminders.filter((r) => r.status === 'snoozed'),
-    [activeReminders, tickMin],
+    [activeReminders],
   )
   const fired = useMemo(
     () => activeReminders.filter((r) => r.status === 'fired'),
     [activeReminders],
+  )
+  const schedulesById = useMemo(
+    () => new Map(schedules.map((schedule) => [schedule.id, schedule])),
+    [schedules],
   )
 
   if (activeReminders.length === 0) return null
@@ -69,7 +77,7 @@ export function ActiveReminders() {
         <AnimatePresence mode="popLayout">
           {/* ── Fired reminders (need action) ── */}
           {fired.map((r) => {
-            const schedule = schedules.find((s) => s.id === r.scheduleId)
+            const schedule = schedulesById.get(r.scheduleId)
             return (
               <motion.div
                 key={r.id}

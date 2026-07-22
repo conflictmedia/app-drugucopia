@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0] - 2026-07-22
+
+### Fixed
+- Performance issues in the Track page
+
 ## [0.2.11] - 2026-07-18
 
 ### Fixed
