@@ -11,6 +11,15 @@ import {
   type Substance,
   type RouteDosageDuration,
 } from "@/lib/substances/index";
+
+import {
+  parseDurationToMinutes,
+  calculatePhaseTimings,
+  calculateDoseScaledTimings,
+  intensityAt,
+} from "@/components/dose-timeline/dose-timeline-utils";
+
+import { classifyDose } from "@/lib/dose-classification";
 import {
   format,
   subDays,
@@ -23,7 +32,6 @@ import {
   differenceInCalendarDays,
   parseISO,
 } from "date-fns";
-import { X509Certificate } from "crypto";
 
 // ─── Shared helpers ─────────────────────────────────────────────────────────
 
@@ -1146,23 +1154,12 @@ export function computeIntensityTimeline(
   windowHours: number = 24,
   sampleIntervalMins: number = 15,
 ): IntensityTimelinePoint[] {
-  // Lazy-load the timeline utils to avoid circular imports at module load time
-  // (these are pure functions but they pull in a lot of code).
-  const {
-    parseDurationToMinutes,
-    calculatePhaseTimings,
-    calculateDoseScaledTimings,
-    intensityAt,
-  } = require("@/components/dose-timeline/dose-timeline-utils");
-  const { classifyDose } = require("@/lib/dose-classification");
-  const { substances } = require("@/lib/substances/index");
-
   const now = Date.now();
   const windowStart = now - windowHours * 60 * 60 * 1000;
 
   // Build a name→substance lookup
   const substanceByName = new Map<string, any>();
-  for (const s of substances) {
+  for (const s of ALL_SUBSTANCES) {
     substanceByName.set(s.name.toLowerCase(), s);
   }
 

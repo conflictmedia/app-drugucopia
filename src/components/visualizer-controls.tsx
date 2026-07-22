@@ -17,6 +17,7 @@ export function VisualizerControls() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    // Mark component as mounted to avoid hydration mismatch
     setMounted(true)
   }, [])
 
@@ -83,11 +84,10 @@ export function VisualizerControls() {
                 <button
                   key={p.id}
                   onClick={() => setPreset(p.id)}
-                  className={`text-[10px] px-2 py-1.5 rounded-md border transition-all text-left ${
-                    preset === p.id
+                  className={`text-[10px] px-2 py-1.5 rounded-md border transition-all text-left ${preset === p.id
                       ? 'border-primary bg-primary/10 text-base-content font-medium'
                       : 'border-base-300 bg-base-200 text-neutral-content hover:border-primary/30'
-                  }`}
+                    }`}
                 >
                   <span
                     className={`inline-block w-2 h-2 rounded-full bg-gradient-to-br ${p.color} mr-1 align-middle`}

@@ -379,9 +379,6 @@ describe("checkAndNotify per-substance logic", () => {
     useToleranceNotificationStore.getState().initialize();
     useDoseStore.getState().initialize();
 
-    vi.useFakeTimers();
-    vi.clearAllMocks();
-  });
     useDoseStore.getState().clearAllDoses();
 
     vi.useFakeTimers();
@@ -397,16 +394,14 @@ describe("checkAndNotify per-substance logic", () => {
     });
 
     // Add caffeine dose that would trigger high tolerance
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const calls: unknown[][] = [];
     const consoleSpy = vi
@@ -434,16 +429,14 @@ describe("checkAndNotify per-substance logic", () => {
       substanceThresholds: {},
     });
 
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const calls: unknown[][] = [];
     const consoleSpy = vi
@@ -473,26 +466,22 @@ describe("checkAndNotify per-substance logic", () => {
       substanceThresholds: {},
     });
 
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Alcohol",
-          amount: 50,
-          unit: "g",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Alcohol",
+        amount: 50,
+        unit: "g",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     vi.spyOn(console, "log").mockImplementation(() => {});
     await checkAndNotify(true);
@@ -516,16 +505,14 @@ describe("checkAndNotify per-substance logic", () => {
       substanceThresholds: {}, // no override
     });
 
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const calls: unknown[][] = [];
     const consoleSpy = vi
@@ -549,16 +536,14 @@ describe("checkAndNotify per-substance logic", () => {
       substanceThresholds: { caffeine: { notifyOnHigh: false } }, // override says no
     });
 
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const calls: unknown[][] = [];
     const consoleSpy = vi
@@ -582,16 +567,14 @@ describe("checkAndNotify per-substance logic", () => {
       substanceThresholds: { caffeine: { notifyOnHigh: true } }, // override says yes
     });
 
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
 
     const calls: unknown[][] = [];
     const consoleSpy = vi
@@ -614,16 +597,14 @@ describe("checkAndNotify per-substance logic", () => {
       enabledSubstances: { caffeine: true },
       substanceThresholds: {},
     });
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const result = await checkAndNotify({
@@ -649,16 +630,14 @@ describe("checkAndNotify per-substance logic", () => {
       enabledSubstances: {}, // nothing selected
       substanceThresholds: {},
     });
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const result = await checkAndNotify({
@@ -683,16 +662,14 @@ describe("checkAndNotify per-substance logic", () => {
     // Old dose — tolerance should be at baseline, which is below the High threshold.
     const oldDate = new Date();
     oldDate.setDate(oldDate.getDate() - 100);
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: oldDate.toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: oldDate.toISOString(),
+      }),
+    );
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     const result = await checkAndNotify({
@@ -715,16 +692,14 @@ describe("checkAndNotify per-substance logic", () => {
       enabledSubstances: { caffeine: true },
       substanceThresholds: {},
     });
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     // First call WITHOUT bypass — sends and records cooldown.
@@ -772,16 +747,14 @@ describe("checkAndNotify per-substance logic", () => {
       enabledSubstances: { caffeine: true },
       substanceThresholds: {},
     });
-    useDoseStore
-      .getState()
-      .addDose(
-        createDose({
-          substanceName: "Caffeine",
-          amount: 200,
-          unit: "mg",
-          timestamp: new Date().toISOString(),
-        }),
-      );
+    useDoseStore.getState().addDose(
+      createDose({
+        substanceName: "Caffeine",
+        amount: 200,
+        unit: "mg",
+        timestamp: new Date().toISOString(),
+      }),
+    );
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     // Call forceToleranceCheck twice — both should send because cooldown
