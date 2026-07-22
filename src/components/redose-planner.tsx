@@ -116,7 +116,9 @@ export function RedosePlanner({
 
   useEffect(() => {
     if (open && smartInterval !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIntervalHours(Math.floor(smartInterval / 60))
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIntervalMinutes(smartInterval % 60)
     }
   }, [open, smartInterval])
@@ -345,11 +347,10 @@ export function RedosePlanner({
             {plannedTimes.map((time, i) => (
               <span
                 key={i}
-                className={`text-xs px-2 py-1 rounded-full border ${
-                  i === 0
+                className={`text-xs px-2 py-1 rounded-full border ${i === 0
                     ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
                     : 'border-base-300 bg-base-200 text-neutral-content'
-                }`}
+                  }`}
               >
                 {i === 0 ? 'Now' : `+${i}`} · {format(time, 'h:mm a')}
               </span>
