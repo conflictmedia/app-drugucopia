@@ -21,7 +21,7 @@
  *   • Expandable per-dose phase details
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
 import { format } from 'date-fns'
 import Link from 'next/link'
 import {
@@ -482,7 +482,7 @@ function buildChartConfig(
 // ─── Main Component ────────────────────────────────────────────────────────
 
 export function IntensityTimelineChart() {
-  const doses = useDoseStore(s => s.doses)
+  const doses = useDoseStore(s => s.activeDoses)
   const isLoaded = useDoseStore(s => s.isLoaded)
 
   const [hiddenSubstances, setHiddenSubstances] = useState<Set<string>>(new Set())
@@ -658,7 +658,7 @@ interface GroupCardProps {
   windowHours: WindowHours
 }
 
-function GroupCard({
+const GroupCard = memo(function GroupCard({
   group, getCategoryColor, selectedRoute, selectedDose,
   onRouteClick, onDoseClick, isExpanded, onToggleExpand, nowTs, windowHours,
 }: GroupCardProps) {
@@ -720,7 +720,9 @@ function GroupCard({
     return group.routes
   }, [group, selectedRoute, selectedDose])
 
-  const sampleCount = isMobile ? 40 : 120
+  // Fix 1.2: Reduced sample count from 120/40 to lower CPU load.
+  // Mobile stays at 40; desktop reduced to 80 for faster sampling.
+  const sampleCount = isMobile ? 40 : 80
   // Window override: uses slidingWindowOverride when in zoom mode, null for auto-fit
   const windowOverride = slidingWindowOverride
 
@@ -1448,7 +1450,7 @@ function GroupCard({
       </CardContent>
     </Card>
   )
-}
+})
 
 // ─── Mobile Phase Strip (2.4) ──────────────────────────────────────────────
 

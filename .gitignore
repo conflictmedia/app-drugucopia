@@ -6,6 +6,8 @@ b64
 scripts/bump-version.sh
 ignore/
 
+.idea/
+
 # dependencies
 <<<<<<< HEAD
 /node_modules

@@ -211,8 +211,9 @@ function DoseLogPageContent() {
   const router = useRouter()
 
   const handleRefresh = useCallback(async () => {
-    router.refresh()
-  }, [router])
+    // Data is fully reactive via Zustand + Firestore; no server round-trip needed.
+    // The PullToRefresh gesture still provides tactile feedback.
+  }, [])
 
   return (
     <PullToRefresh onRefresh={handleRefresh} threshold={60}>

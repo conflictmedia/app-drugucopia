@@ -20,10 +20,14 @@ export function ActiveReminders() {
   const snoozeReminder = useReminderStore((s) => s.snoozeReminder)
   const dismissAllFired = useReminderStore((s) => s.dismissAllFired)
 
-  // Force re-render every second for live countdown
-  const [tick, setTick] = useState(0)
+  // Force re-render only when the minute changes (not every second) to
+  // reduce CPU cost while keeping countdowns visually accurate.
+  const [tickMin, setTickMin] = useState(() => Math.floor(Date.now() / 60_000))
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    const id = setInterval(() => {
+      const currentMin = Math.floor(Date.now() / 60_000)
+      setTickMin((prev) => (prev !== currentMin ? currentMin : prev))
+    }, 15_000) // check every 15s — plenty for minute-boundary updates
     return () => clearInterval(id)
   }, [])
 
@@ -31,11 +35,11 @@ export function ActiveReminders() {
 
   const running = useMemo(
     () => activeReminders.filter((r) => r.status === 'running'),
-    [activeReminders, tick],
+    [activeReminders, tickMin],
   )
   const snoozed = useMemo(
     () => activeReminders.filter((r) => r.status === 'snoozed'),
-    [activeReminders, tick],
+    [activeReminders, tickMin],
   )
   const fired = useMemo(
     () => activeReminders.filter((r) => r.status === 'fired'),
