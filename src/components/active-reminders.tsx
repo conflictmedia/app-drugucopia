@@ -20,26 +20,38 @@ export function ActiveReminders() {
   const snoozeReminder = useReminderStore((s) => s.snoozeReminder)
   const dismissAllFired = useReminderStore((s) => s.dismissAllFired)
 
-  // Force re-render every second for live countdown
-  const [tick, setTick] = useState(0)
+  // Align updates to minute boundaries instead of polling four times/minute.
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000)
-    return () => clearInterval(id)
+    let intervalId: ReturnType<typeof setInterval> | undefined
+    const timeoutId = setTimeout(() => {
+      setNow(Date.now())
+      intervalId = setInterval(
+        () => setNow(Date.now()),
+        60_000,
+      )
+    }, 60_000 - (Date.now() % 60_000))
+    return () => {
+      clearTimeout(timeoutId)
+      if (intervalId) clearInterval(intervalId)
+    }
   }, [])
-
-  const now = Date.now()
 
   const running = useMemo(
     () => activeReminders.filter((r) => r.status === 'running'),
-    [activeReminders, tick],
+    [activeReminders],
   )
   const snoozed = useMemo(
     () => activeReminders.filter((r) => r.status === 'snoozed'),
-    [activeReminders, tick],
+    [activeReminders],
   )
   const fired = useMemo(
     () => activeReminders.filter((r) => r.status === 'fired'),
     [activeReminders],
+  )
+  const schedulesById = useMemo(
+    () => new Map(schedules.map((schedule) => [schedule.id, schedule])),
+    [schedules],
   )
 
   if (activeReminders.length === 0) return null
@@ -65,7 +77,7 @@ export function ActiveReminders() {
         <AnimatePresence mode="popLayout">
           {/* ── Fired reminders (need action) ── */}
           {fired.map((r) => {
-            const schedule = schedules.find((s) => s.id === r.scheduleId)
+            const schedule = schedulesById.get(r.scheduleId)
             return (
               <motion.div
                 key={r.id}

@@ -1,7 +1,7 @@
 'use client'
 
 import { formatDoseAmount } from '@/lib/utils'
-import { useState, useRef, useMemo, useEffect, useDeferredValue } from 'react'
+import { useState, useRef, useMemo, useEffect, useDeferredValue, memo, useCallback } from 'react'
 import { format, isToday, isYesterday, isThisWeek, isThisMonth, subDays } from 'date-fns'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +35,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import Link from 'next/link'
+import { useVirtualizer } from '@tanstack/react-virtual'
 
 type ImportResult =
   | { ok: true; doses: DoseLog[] }
@@ -42,18 +43,306 @@ type ImportResult =
 
 type ConflictStrategy = 'skip' | 'overwrite'
 
-// Keep history rendering bounded. The full filtered collection remains available
-// to export/import and filtering, but only this many rows are mounted at once.
-const HISTORY_PAGE_SIZE = 25
-
 // Catalog lookups used to run once per rendered row via `substances.find(...)`.
 // Build immutable indexes once so a large history stays O(rows shown).
 const substancesById = new Map(substances.map((substance) => [substance.id, substance]))
 const substancesByName = new Map(substances.map((substance) => [substance.name.toLowerCase(), substance]))
 
+const categoryNames = new Map(categories.map((category) => [category.id, category.name]))
+
 function getKnownSubstance(dose: DoseLog) {
   return (dose.substanceId ? substancesById.get(dose.substanceId) : undefined)
     ?? substancesByName.get(dose.substanceName.toLowerCase())
+}
+
+function getCategoryColor(category: string) {
+  return categoryColors[category as keyof typeof categoryColors]
+    || 'text-gray-500 bg-gray-500/10 border-gray-500/20'
+}
+
+function groupDosesByDate(doses: DoseLog[]) {
+  const groups: Record<string, DoseLog[]> = {}
+  for (const dose of doses) {
+    const date = new Date(dose.timestamp)
+    const key = isToday(date) ? 'Today'
+      : isYesterday(date) ? 'Yesterday'
+        : isThisWeek(date) ? 'This Week'
+          : isThisMonth(date) ? 'This Month'
+            : format(date, 'MMMM yyyy')
+      ; (groups[key] ??= []).push(dose)
+  }
+  return groups
+}
+
+// ─── Virtualized DoseRow ──────────────────────────────────────────────────
+// Extracted as a memoized component so only changed rows re-render.
+interface DoseRowProps {
+  dose: DoseLog
+  isDeleting: boolean
+  isRedosing: boolean
+  isInlineEditing: boolean
+  inlineNotesDraft: string
+  knownSubstance: ReturnType<typeof getKnownSubstance>
+  categoryColor: (cat: string) => string
+  onEdit: (dose: DoseLog) => void
+  onRedose: (dose: DoseLog) => void
+  onDelete: (id: string) => void
+  onStartInlineEdit: (dose: DoseLog) => void
+  onCancelInlineEdit: () => void
+  onSaveInlineEdit: (dose: DoseLog) => void
+  onInlineNotesChange: (value: string) => void
+}
+
+const DoseRow = memo(function DoseRow({
+  dose, isDeleting, isRedosing, isInlineEditing, inlineNotesDraft,
+  knownSubstance, categoryColor,
+  onEdit, onRedose, onDelete,
+  onStartInlineEdit, onCancelInlineEdit, onSaveInlineEdit, onInlineNotesChange,
+}: DoseRowProps) {
+  return (
+    <div className="dose-log-entry rounded-lg border p-3 hover:bg-base-200/50 transition-colors">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {knownSubstance ? (
+              <Link href={`/?substance=${knownSubstance.id}`} className="font-medium hover:underline hover:text-primary transition-colors">
+                {dose.substanceName}
+              </Link>
+            ) : (
+              <span className="font-medium">{dose.substanceName}</span>
+            )}
+            {(dose.categories || []).map((cat) => (
+              <Badge key={cat} variant="outline" className={categoryColor(cat)}>{cat}</Badge>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-1.5 text-sm text-neutral-content">
+            <span className="flex items-center gap-1">
+              <Droplets className="h-3 w-3 shrink-0" />
+              {(() => {
+                const formatted = formatDoseAmount(dose.amount, dose.unit, dose.substanceName)
+                return `${formatted.amount} ${formatted.unit}${formatted.alcoholEquivalent ? ` ${formatted.alcoholEquivalent}` : ''}`
+              })()}
+            </span>
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3 shrink-0" />{format(new Date(dose.timestamp), 'h:mm a')}
+            </span>
+            <span>{dose.route}</span>
+          </div>
+        </div>
+        <div className="flex gap-1 shrink-0">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(dose)} aria-label={`Edit full dose for ${dose.substanceName}`}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onRedose(dose)} disabled={isRedosing} aria-label={`Redose ${dose.substanceName}`}>
+            {isRedosing ? <Loader2 className="animate-spin h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-error" onClick={() => onDelete(dose.id)} disabled={isDeleting} aria-label={`Delete ${dose.substanceName} dose`}>
+            {isDeleting ? <Loader2 className="animate-spin h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+
+      {isInlineEditing ? (
+        <div className="mt-3 grid gap-1.5">
+          <Textarea
+            autoFocus
+            value={inlineNotesDraft}
+            onChange={(e) => onInlineNotesChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                onSaveInlineEdit(dose)
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                onCancelInlineEdit()
+              }
+            }}
+            onBlur={() => onSaveInlineEdit(dose)}
+            placeholder="Add a note about this dose…"
+            rows={2}
+            className="text-sm"
+          />
+          <div className="flex items-center justify-between text-[10px] text-neutral-content">
+            <span>
+              <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">⌘</kbd>
+              {'+'}
+              <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">↵</kbd>
+              {' '}save{' · '}
+              <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">esc</kbd>
+              {' '}cancel
+            </span>
+            <span className="flex gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={onCancelInlineEdit}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => onSaveInlineEdit(dose)}
+              >
+                Save
+              </Button>
+            </span>
+          </div>
+        </div>
+      ) : dose.notes ? (
+        <div className="mt-2 group/note">
+          <p className="text-xs text-base-content/80 leading-relaxed whitespace-pre-wrap break-words">
+            {dose.notes}
+          </p>
+          <button
+            type="button"
+            onClick={() => onStartInlineEdit(dose)}
+            className="mt-1 inline-flex items-center gap-1 text-[11px] text-neutral-content/60 hover:text-primary transition-colors"
+            aria-label={`Edit note for ${dose.substanceName}`}
+          >
+            <Pencil className="h-2.5 w-2.5" />
+            Edit note
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onStartInlineEdit(dose)}
+          className="mt-2 inline-flex items-center gap-1 text-[11px] text-neutral-content/50 hover:text-primary transition-colors"
+          aria-label={`Add note for ${dose.substanceName}`}
+        >
+          <Plus className="h-2.5 w-2.5" />
+          Add note
+        </button>
+      )}
+    </div>
+  )
+})
+
+// ─── Virtualized DoseHistory List ─────────────────────────────────────────
+interface VirtualizedDoseHistoryProps {
+  groupedDoses: { [key: string]: DoseLog[] }
+  getCategoryColor: (cat: string) => string
+  deleting: string | null
+  redosing: string | null
+  inlineEditingId: string | null
+  inlineNotesDraft: string
+  setEditingDose: (dose: DoseLog | null) => void
+  handleRedose: (dose: DoseLog) => void
+  handleDelete: (id: string) => void
+  startInlineEdit: (dose: DoseLog) => void
+  cancelInlineEdit: () => void
+  saveInlineEdit: (dose: DoseLog) => void
+  setInlineNotesDraft: (value: string) => void
+}
+
+function VirtualizedDoseHistory({
+  groupedDoses,
+  deleting, redosing, inlineEditingId, inlineNotesDraft,
+  setEditingDose, handleRedose, handleDelete,
+  startInlineEdit, cancelInlineEdit, saveInlineEdit, setInlineNotesDraft,
+  getCategoryColor,
+}: VirtualizedDoseHistoryProps) {
+  const parentRef = useRef<HTMLDivElement>(null)
+
+  // Flatten grouped doses: each entry is either a header or a dose row
+  const flatItems = useMemo(() => {
+    const items: Array<{ type: 'header'; group: string; key: string } | { type: 'dose'; dose: DoseLog; group: string; key: string }> = []
+    for (const [group, doses] of Object.entries(groupedDoses)) {
+      items.push({ type: 'header', group, key: `header-${group}` })
+      for (const dose of doses) {
+        items.push({ type: 'dose', dose, group, key: dose.id })
+      }
+    }
+    return items
+  }, [groupedDoses])
+
+  const rowVirtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => parentRef.current,
+    getItemKey: (index) => flatItems[index].key,
+    estimateSize: (index) => flatItems[index].type === 'header' ? 40 : 112,
+    overscan: 6,
+  })
+
+  const virtualItems = rowVirtualizer.getVirtualItems()
+
+  return (
+    <div
+      ref={parentRef}
+      className="overflow-y-auto"
+      style={{
+        contain: 'layout paint style',
+        height: `min(70vh, ${rowVirtualizer.getTotalSize()}px)`,
+      }}
+    >
+      <div
+        style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}
+      >
+        {virtualItems.map((virtualItem) => {
+          const item = flatItems[virtualItem.index]
+          if (item.type === 'header') {
+            return (
+              <div
+                key={item.key}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualItem.index}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
+              >
+                <h4 className="text-sm font-medium text-neutral-content bg-base-100 py-1 pb-3 text-center">
+                  {item.group}
+                </h4>
+              </div>
+            )
+          }
+          const dose = item.dose
+          const knownSubstance = getKnownSubstance(dose)
+          const isInlineEditing = inlineEditingId === dose.id
+          return (
+            <div
+              key={item.key}
+              ref={rowVirtualizer.measureElement}
+              data-index={virtualItem.index}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+              className="px-1 pb-3"
+            >
+              <DoseRow
+                dose={dose}
+                isDeleting={deleting === dose.id}
+                isRedosing={redosing === dose.id}
+                isInlineEditing={isInlineEditing}
+                inlineNotesDraft={isInlineEditing ? inlineNotesDraft : ''}
+                knownSubstance={knownSubstance}
+                categoryColor={getCategoryColor}
+                onEdit={setEditingDose}
+                onRedose={handleRedose}
+                onDelete={handleDelete}
+                onStartInlineEdit={startInlineEdit}
+                onCancelInlineEdit={cancelInlineEdit}
+                onSaveInlineEdit={saveInlineEdit}
+                onInlineNotesChange={setInlineNotesDraft}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 interface ImportPreview {
@@ -575,7 +864,6 @@ export function DoseHistory() {
   const [historySearch, setHistorySearch] = useState('')
   // Keep the input responsive while a large history is being filtered.
   const deferredHistorySearch = useDeferredValue(historySearch)
-  const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE_SIZE)
 
   // A4 — date-range preset filter + category filter chips.
   // 'all' = no date filtering; the others use subDays() to compute a
@@ -608,21 +896,6 @@ export function DoseHistory() {
   const jsonInputRef = useRef<HTMLInputElement>(null)
   const psyloJsonInputRef = useRef<HTMLInputElement>(null)
   const pwjournalInputRef = useRef<HTMLInputElement>(null)
-
-  const groupDosesByDate = (doses: DoseLog[]) => {
-    const groups: { [key: string]: DoseLog[] } = {}
-    doses.forEach((dose) => {
-      const date = new Date(dose.timestamp)
-      const key = isToday(date) ? 'Today'
-        : isYesterday(date) ? 'Yesterday'
-          : isThisWeek(date) ? 'This Week'
-            : isThisMonth(date) ? 'This Month'
-              : format(date, 'MMMM yyyy')
-      if (!groups[key]) groups[key] = []
-      groups[key].push(dose)
-    })
-    return groups
-  }
 
   // A3 + A4 — apply search + date-range + category filter BEFORE grouping
   // so empty date groups naturally fall out of the render. Search is
@@ -678,7 +951,7 @@ export function DoseHistory() {
       .sort((a, b) => b[1] - a[1])
       .map(([id, count]) => ({
         id,
-        label: categories.find((c) => c.id === id)?.name || id,
+        label: categoryNames.get(id) || id,
         count,
       }))
   }, [doses])
@@ -693,34 +966,6 @@ export function DoseHistory() {
   }
 
   const groupedDoses = useMemo(() => groupDosesByDate(filteredDoses), [filteredDoses])
-
-  // Reset pagination when the result set changes. Rendering is intentionally
-  // bounded even if the user has thousands of matching logs.
-  useEffect(() => {
-    setVisibleCount(HISTORY_PAGE_SIZE)
-  }, [deferredHistorySearch, dateRange, categoryFilter])
-
-  const visibleGroupedDoses = useMemo(() => {
-    let remaining = visibleCount
-    const visible: Array<[string, DoseLog[]]> = []
-    for (const [group, groupDoses] of Object.entries(groupedDoses)) {
-      if (remaining <= 0) break
-      const rows = groupDoses.slice(0, remaining)
-      if (rows.length > 0) visible.push([group, rows])
-      remaining -= rows.length
-    }
-    return visible
-  }, [groupedDoses, visibleCount])
-
-  if (!isLoaded) {
-    return (
-      <Card>
-        <CardContent className="flex justify-center py-8">
-          <Loader2 className="h-6 w-6 animate-spin text-neutral-content" />
-        </CardContent>
-      </Card>
-    )
-  }
 
   const triggerDownload = (content: string, filename: string, mimeType: string) => {
     const blob = new Blob([content], { type: mimeType })
@@ -917,14 +1162,14 @@ export function DoseHistory() {
     setShowDeleteAllDialog(true)
   }
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback((id: string) => {
     setDeleting(id)
     deleteDose(id)
     setDeleting(null)
     toast({ title: 'Dose deleted', description: 'The dose log has been removed.' })
-  }
+  }, [deleteDose])
 
-  const handleRedose = async (dose: DoseLog) => {
+  const handleRedose = useCallback(async (dose: DoseLog) => {
     setRedosing(dose.id)
     const now = new Date().toISOString()
     addDose({
@@ -964,27 +1209,23 @@ export function DoseHistory() {
     } catch {
       // Reminder store may not be available — skip
     }
-  }
-
-  const getCategoryColor = (category: string) =>
-    categoryColors[category as keyof typeof categoryColors] ||
-    'text-gray-500 bg-gray-500/10 border-gray-500/20'
+  }, [addDose])
 
   // A6 — inline notes editing handlers. The inline editor saves on
   // blur, on Cmd/Ctrl+Enter, or on explicit Save click. Escape cancels.
   // Empty notes are stored as null so the row collapses back to the
   // "Add note" affordance.
-  const startInlineEdit = (dose: DoseLog) => {
+  const startInlineEdit = useCallback((dose: DoseLog) => {
     setInlineEditingId(dose.id)
     setInlineNotesDraft(dose.notes || '')
-  }
+  }, [])
 
-  const cancelInlineEdit = () => {
+  const cancelInlineEdit = useCallback(() => {
     setInlineEditingId(null)
     setInlineNotesDraft('')
-  }
+  }, [])
 
-  const saveInlineEdit = (dose: DoseLog) => {
+  const saveInlineEdit = useCallback((dose: DoseLog) => {
     const trimmed = inlineNotesDraft.trim()
     const nextNotes = trimmed === '' ? null : trimmed
     // Only write if it actually changed — avoids bumping updatedAt for no-op.
@@ -1002,6 +1243,16 @@ export function DoseHistory() {
       title: 'Note saved',
       description: trimmed === '' ? 'Note cleared.' : undefined,
     })
+  }, [cancelInlineEdit, inlineNotesDraft, updateDose])
+
+  if (!isLoaded) {
+    return (
+      <Card>
+        <CardContent className="flex justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-neutral-content" />
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
@@ -1311,165 +1562,21 @@ export function DoseHistory() {
                   )}
                 </div>
               ) : (
-                <>
-                  {visibleGroupedDoses.map(([dateGroup, groupDoses]) => {
-                    return (
-                      <div key={dateGroup} className="mb-6">
-                        <h4 className="text-sm font-medium text-neutral-content mb-3 sticky top-0 bg-base-100 py-1 z-10 text-center">
-                          {dateGroup}
-                        </h4>
-                        <div className="space-y-3">
-                          {groupDoses.map((dose) => {
-                            // Find if it's a known substance to link to its page
-                            const knownSubstance = getKnownSubstance(dose)
-
-                            return (
-                              <div key={dose.id} className="dose-log-entry rounded-lg border p-3 hover:bg-base-200/50 transition-colors content-visibility-auto contain-intrinsic-size-[200px]">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      {knownSubstance ? (
-                                        <Link href={`/?substance=${knownSubstance.id}`} className="font-medium hover:underline hover:text-primary transition-colors">
-                                          {dose.substanceName}
-                                        </Link>
-                                      ) : (
-                                        <span className="font-medium">{dose.substanceName}</span>
-                                      )}
-                                      {(dose.categories || []).map((cat) => (
-                                        <Badge key={cat} variant="outline" className={getCategoryColor(cat)}>{cat}</Badge>
-                                      ))}
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-1.5 text-sm text-neutral-content">
-                                      <span className="flex items-center gap-1">
-                                        <Droplets className="h-3 w-3 shrink-0" />
-                                        {(() => {
-                                          const formatted = formatDoseAmount(dose.amount, dose.unit, dose.substanceName)
-                                          return `${formatted.amount} ${formatted.unit}${formatted.alcoholEquivalent ? ` ${formatted.alcoholEquivalent}` : ''}`
-                                        })()}
-                                      </span>
-                                      <span className="flex items-center gap-1">
-                                        <Clock className="h-3 w-3 shrink-0" />{format(new Date(dose.timestamp), 'h:mm a')}
-                                      </span>
-                                      <span>{dose.route}</span>
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-1 shrink-0">
-                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditingDose(dose)} aria-label={`Edit full dose for ${dose.substanceName}`}>
-                                      <Pencil className="h-4 w-4" />
-                                    </Button>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleRedose(dose)} disabled={redosing === dose.id} aria-label={`Redose ${dose.substanceName}`}>
-                                      {redosing === dose.id ? <Loader2 className="animate-spin h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
-                                    </Button>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 text-error" onClick={() => handleDelete(dose.id)} disabled={deleting === dose.id} aria-label={`Delete ${dose.substanceName} dose`}>
-                                      {deleting === dose.id ? <Loader2 className="animate-spin h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
-                                    </Button>
-                                  </div>
-                                </div>
-
-                                {/* A6 — Inline notes editor.
-                                Read mode: shows the note text + a small "edit" pencil.
-                                Edit mode: shows a textarea + Save/Cancel buttons.
-                                If the dose has no notes, show a subtle "Add note" link
-                                instead so the user knows the field exists. */}
-                                {inlineEditingId === dose.id ? (
-                                  <div className="mt-3 grid gap-1.5">
-                                    <Textarea
-                                      autoFocus
-                                      value={inlineNotesDraft}
-                                      onChange={(e) => setInlineNotesDraft(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                                          e.preventDefault()
-                                          saveInlineEdit(dose)
-                                        } else if (e.key === 'Escape') {
-                                          e.preventDefault()
-                                          cancelInlineEdit()
-                                        }
-                                      }}
-                                      onBlur={() => saveInlineEdit(dose)}
-                                      placeholder="Add a note about this dose…"
-                                      rows={2}
-                                      className="text-sm"
-                                    />
-                                    <div className="flex items-center justify-between text-[10px] text-neutral-content">
-                                      <span>
-                                        <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">⌘</kbd>
-                                        {'+'}
-                                        <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">↵</kbd>
-                                        {' '}save{' · '}
-                                        <kbd className="px-1 py-0.5 rounded bg-base-200 border border-base-300 font-mono">esc</kbd>
-                                        {' '}cancel
-                                      </span>
-                                      <span className="flex gap-1">
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-7 text-xs"
-                                          onClick={cancelInlineEdit}
-                                        >
-                                          Cancel
-                                        </Button>
-                                        <Button
-                                          type="button"
-                                          size="sm"
-                                          className="h-7 text-xs"
-                                          onClick={() => saveInlineEdit(dose)}
-                                        >
-                                          Save
-                                        </Button>
-                                      </span>
-                                    </div>
-                                  </div>
-                                ) : dose.notes ? (
-                                  <div className="mt-2 group/note">
-                                    <p className="text-xs text-base-content/80 leading-relaxed whitespace-pre-wrap break-words">
-                                      {dose.notes}
-                                    </p>
-                                    <button
-                                      type="button"
-                                      onClick={() => startInlineEdit(dose)}
-                                      className="mt-1 inline-flex items-center gap-1 text-[11px] text-neutral-content/60 hover:text-primary transition-colors"
-                                      aria-label={`Edit note for ${dose.substanceName}`}
-                                    >
-                                      <Pencil className="h-2.5 w-2.5" />
-                                      Edit note
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => startInlineEdit(dose)}
-                                    className="mt-2 inline-flex items-center gap-1 text-[11px] text-neutral-content/50 hover:text-primary transition-colors"
-                                    aria-label={`Add note for ${dose.substanceName}`}
-                                  >
-                                    <Plus className="h-2.5 w-2.5" />
-                                    Add note
-                                  </button>
-                                )}
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {visibleCount < filteredDoses.length && (
-                    <div className="flex flex-col items-center gap-2 pt-2">
-                      <p className="text-xs text-neutral-content">
-                        Showing {Math.min(visibleCount, filteredDoses.length)} of {filteredDoses.length} doses
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setVisibleCount((count) => count + HISTORY_PAGE_SIZE)}
-                      >
-                        Load 25 more
-                      </Button>
-                    </div>
-                  )}
-                </>
+                <VirtualizedDoseHistory
+                  groupedDoses={groupedDoses}
+                  getCategoryColor={getCategoryColor}
+                  deleting={deleting}
+                  redosing={redosing}
+                  inlineEditingId={inlineEditingId}
+                  inlineNotesDraft={inlineNotesDraft}
+                  setEditingDose={setEditingDose}
+                  handleRedose={handleRedose}
+                  handleDelete={handleDelete}
+                  startInlineEdit={startInlineEdit}
+                  cancelInlineEdit={cancelInlineEdit}
+                  saveInlineEdit={saveInlineEdit}
+                  setInlineNotesDraft={setInlineNotesDraft}
+                />
               )}
             </div>
           )}

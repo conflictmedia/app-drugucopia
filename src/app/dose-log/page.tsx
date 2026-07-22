@@ -2,7 +2,6 @@
 
 import { Suspense, useMemo, useState, useCallback } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
 import { Bell, Activity, History, BarChart3 } from 'lucide-react'
 import { useDoseStore } from '@/store/dose-store'
 import { useReminderStore } from '@/store/reminder-store'
@@ -208,11 +207,11 @@ function InsightsTab() {
 
 function DoseLogPageContent() {
   const [tab, setTab] = useState<TrackTab>('session')
-  const router = useRouter()
 
   const handleRefresh = useCallback(async () => {
-    router.refresh()
-  }, [router])
+    // Data is fully reactive via Zustand + Firestore; no server round-trip needed.
+    // The PullToRefresh gesture still provides tactile feedback.
+  }, [])
 
   return (
     <PullToRefresh onRefresh={handleRefresh} threshold={60}>
