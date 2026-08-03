@@ -9,12 +9,7 @@ ignore/
 .idea/
 
 # dependencies
-<<<<<<< HEAD
-/node_modules
-/.pnp
-.pnp.js
-=======
-node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -22,7 +17,6 @@ node_modules
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
->>>>>>> e3cfb53 (Merge pull request #40 from drugucopia/dui)
 
 # testing
 /coverage
@@ -57,7 +51,7 @@ src-tauri/gen/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-<<<<<<< HEAD
+.pnpm-debug.log*
 
 # local env files
 .env*.local
@@ -65,28 +59,14 @@ yarn-error.log*
 
 # vercel
 .vercel
-=======
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-
->>>>>>> e3cfb53 (Merge pull request #40 from drugucopia/dui)
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-<<<<<<< HEAD
-=======
+
 local-*
 dev.log
 test
-
-
 server.log
-# Skills directory
 
-
->>>>>>> e3cfb53 (Merge pull request #40 from drugucopia/dui)
+# Skills directory (if any)

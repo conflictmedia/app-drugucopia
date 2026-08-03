@@ -78,8 +78,8 @@ function getDb(): Firestore | null {
     // default transport in browsers and desktop web builds.
     _db = isTauri()
       ? initializeFirestore(_app, {
-          experimentalAutoDetectLongPolling: true,
-        })
+        experimentalAutoDetectLongPolling: true,
+      })
       : getFirestore(_app)
     console.debug(
       '[sync] Firebase initialized successfully, project:', firebaseConfig.projectId,
@@ -1000,11 +1000,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // Track the latest unprocessed snapshot so we don't lose data
       // when a push is in progress.  Instead of dropping the snapshot
       // entirely, we queue it and process it once the push completes.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       let pendingSnap: any = null
       let isProcessingSnap = false
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const processSnapshot = async (docSnap: any) => {
         isProcessingSnap = true
         console.debug('[sync] processSnapshot starting, doc exists:', docSnap.exists())
@@ -1340,7 +1340,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       setSyncStatus('error')
     }
     // roomId and password are read via refs to avoid recreating on every keystroke
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [
     isLoaded,
     reminderIsLoaded,
@@ -1384,7 +1384,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     setRoomId('')
     setPassword('')
     toast({ title: 'Sync Disconnected', description: 'Data will only save locally.' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [setSyncStatus])
 
   // D2 — Resolve a pending conflict.
@@ -1455,11 +1455,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // password is in sessionStorage, so auto-reconnect only works within
   // the same tab session. If the user closed the tab, the room name
   // is pre-filled but they'll need to re-enter the password.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- setState in useEffect is intentional for auto-connect
+  // setState calls here are intentional one-time initialization from storage.
+
   useEffect(() => {
     const creds = loadSyncCredentials()
     if (creds) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setRoomId(creds.room)
+
       setPassword(creds.pass)
       connectToSyncRef.current(creds.room, creds.pass)
     } else {
@@ -1467,10 +1470,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // localStorage from a previous session. Pre-fill it so the user
       // only has to type the password.
       const storedRoom = hasStoredRoom()
-      if (storedRoom) setRoomId(storedRoom)
+      if (storedRoom) {
+
+        setRoomId(storedRoom)
+      }
     }
     return () => { if (unsubscribeRef.current) unsubscribeRef.current() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [])
 
   const contextValue = useMemo(() => ({
