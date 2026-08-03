@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2] - 2026-08-03
+
+### Fixed
+- psylog imports
+
+## [0.3.1] - 2026-08-03
+
+### Fixed
+- minor fixes to due with importing from psylog
+
 ## [0.3.0] - 2026-07-22
 
 ### Fixed
