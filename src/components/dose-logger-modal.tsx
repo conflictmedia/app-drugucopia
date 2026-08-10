@@ -1436,7 +1436,7 @@ export function DoseLoggerModal({
           title="Log a Dose"
           description="Record your substance use for tracking and harm reduction purposes."
           showDragHandle={true}
-          maxHeight="85dvh"
+          maxHeight="80dvh"
           footer={renderFormActions()}
         >
           {renderFormContent()}
@@ -1452,7 +1452,7 @@ export function DoseLoggerModal({
         onClose={handleClose}
       >
         <form onSubmit={onSubmit}>
-          <div className="modal-box max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] max-w-[500px]">
+          <div className="modal-box max-sm:pb-[max(1.5rem,env(safe-area-inset-bottom,0px))] max-w-[420px]">
             <button
               type="button"
               aria-label="Close"
@@ -1480,28 +1480,51 @@ export function DoseLoggerModal({
     )
   }
 
-  if (trigger) {
-    return (
-      <>
-        <button
-          type="button"
-          onClick={() => {
-            if (controlledOpen !== undefined) {
-              onOpenChange?.(true)
-            } else {
-              setInternalOpen(true)
-            }
-          }}
-          className="inline-flex"
-        >
-          {trigger}
-        </button>
-        {renderModal()}
-      </>
-    )
-  }
+  const plannerSubstance = selectedSubstance || (substanceName ? { id: substanceId || `custom-${substanceName.toLowerCase().replace(/\s+/g, '-')}`, name: substanceName, categories: categories || [] } : null)
 
-  return renderModal()
+  return (
+    <>
+      {trigger ? (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              if (controlledOpen !== undefined) {
+                onOpenChange?.(true)
+              } else {
+                setInternalOpen(true)
+              }
+            }}
+            className="inline-flex"
+          >
+            {trigger}
+          </button>
+          {renderModal()}
+        </>
+      ) : (
+        renderModal()
+      )}
+      {isPlanDialogOpen && plannerSubstance && (
+        <RedosePlanner
+          open={isPlanDialogOpen}
+          onOpenChange={(open) => {
+            setIsPlanDialogOpen(open)
+          }}
+          substance={{ id: plannerSubstance.id, name: plannerSubstance.name, categories: plannerSubstance.categories || categories || [] }}
+          baseAmount={parseFloat(amount) || 0}
+          baseUnit={unit || 'mg'}
+          route={route || 'oral'}
+          duration={resolvedDuration || estimatedDuration || null}
+          notes={notes || null}
+          mood={mood || null}
+          setting={setting || null}
+          intensity={intensity != null ? intensity : null}
+          timestamp={timestamp || undefined}
+          logInitialDose={true}
+        />
+      )}
+    </>
+  )
 
   function renderFormContent() {
     return (

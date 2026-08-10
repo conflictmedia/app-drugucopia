@@ -965,7 +965,7 @@
   @media (max-width: 767px) {
     .modal-box {
       border-radius: 1.25rem 1.25rem 0 0 !important;
-      max-height: 92dvh;
+      max-height: 85dvh;
       margin-top: auto;
       margin-bottom: 0;
       padding-bottom: max(1.5rem, env(safe-area-inset-bottom, 0px));

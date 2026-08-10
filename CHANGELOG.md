@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.3] - 2026-08-10
+
+### Changed
+- Modal scaling a little bit
+
+### Fixed
+- Plan Redose button in logger modal
+
 ## [0.3.2] - 2026-08-03
 
 ### Fixed
