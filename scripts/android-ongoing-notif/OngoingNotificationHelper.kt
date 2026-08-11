@@ -1,4 +1,4 @@
-package com.drugucopia.app
+package com.drugucopiadev.app
 
 import android.Manifest
 import android.app.NotificationChannel

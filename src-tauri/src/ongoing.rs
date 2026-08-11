@@ -66,7 +66,7 @@ pub fn show_ongoing_notification(
                     };
 
                     // Find helper class
-                    let class = match env.find_class("com/drugucopia/app/OngoingNotificationHelper")
+                    let class = match env.find_class("com/drugucopiadev/app/OngoingNotificationHelper")
                     {
                         Ok(c) => c,
                         Err(e) => {
@@ -170,7 +170,7 @@ pub fn cancel_ongoing_notification(app: tauri::AppHandle, id: i32) -> Result<(),
                 let result: Result<(), String> = (|| {
                     use jni::objects::JValue;
 
-                    let class = match env.find_class("com/drugucopia/app/OngoingNotificationHelper")
+                    let class = match env.find_class("com/drugucopiadev/app/OngoingNotificationHelper")
                     {
                         Ok(c) => c,
                         Err(e) => {

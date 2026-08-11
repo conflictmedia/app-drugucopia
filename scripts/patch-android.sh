@@ -13,7 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ANDROID_DIR="$SCRIPT_DIR/../src-tauri/gen/android"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ANDROID_DIR="$PROJECT_ROOT/src-tauri/gen/android"
 
 if [ ! -d "$ANDROID_DIR" ]; then
   echo "Error: Android project not found at $ANDROID_DIR"
@@ -26,6 +27,7 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 info()  { echo -e "${CYAN}[patch]${NC} $*"; }
+ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
 
 # --- ICON FIX: Sync launcher icons from public/ to Android mipmap ---
 resolve_icon_src() {
@@ -102,11 +104,13 @@ PYEOF
 fi
 
 
-ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
-
 # ─── 1. Install OngoingNotificationHelper.kt ──────────────────────────────────
 # Find the Kotlin source directory (varies by project name)
-KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -type d -maxdepth 4 | head -1)
+# Find the Kotlin source directory matching the package (e.g. com/.../app)
+KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -type d -name "app" | head -1)
+if [ -z "$KOTLIN_SRC" ]; then
+  KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -mindepth 2 -type d -maxdepth 4 | head -1)
+fi
 
 if [ -z "$KOTLIN_SRC" ]; then
   echo "Error: Could not find Kotlin source directory"
@@ -116,6 +120,16 @@ fi
 info "Installing OngoingNotificationHelper.kt to $KOTLIN_SRC"
 cp "$SCRIPT_DIR/android-ongoing-notif/OngoingNotificationHelper.kt" "$KOTLIN_SRC/"
 ok "Installed OngoingNotificationHelper.kt"
+
+# ─── 1a. Install DownloadsHelper.kt (native "Export to JSON/CSV" target) ──────
+# Android WebView silently ignores <a download> for blob: URLs, so the export
+# buttons in the Track page history tab need a native fallback that writes
+# directly to the public Downloads directory via MediaStore.
+if [ -f "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" ]; then
+  info "Installing DownloadsHelper.kt to $KOTLIN_SRC"
+  cp "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" "$KOTLIN_SRC/"
+  ok "Installed DownloadsHelper.kt"
+fi
 
 # ─── 1b. Ensure INTERNET permission exists (critical for Firebase on Android)
 MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
@@ -192,6 +206,7 @@ echo -e "${GREEN}═════════════════════
 echo ""
 echo "  Installed:"
 echo "    • OngoingNotificationHelper.kt (unswipeable notifications)"
+echo "    • DownloadsHelper.kt (native Export-to-Downloads for JSON/CSV)"
 echo "    • Dark status/nav bar theme"
 echo "    • Edge-to-edge display mode"
 echo "    • INTERNET + ACCESS_NETWORK_STATE permissions (Firebase)"

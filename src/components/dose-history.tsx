@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dialog'
 import Link from 'next/link'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { isTauri } from '@/lib/tauri-bridge'
 
 type ImportResult =
   | { ok: true; doses: DoseLog[] }
@@ -1178,7 +1179,41 @@ export function DoseHistory() {
 
   const groupedDoses = useMemo(() => groupDosesByDate(filteredDoses), [filteredDoses])
 
-  const triggerDownload = (content: string, filename: string, mimeType: string) => {
+  /**
+   * Trigger a file download.
+   *
+   * On the web (PWA / browser) this uses the standard Blob + `<a download>`
+   * technique. Inside Tauri (Android app or desktop binary) the WebView
+   * silently ignores blob-URL anchor downloads, so we delegate to the native
+   * `save_to_downloads` Rust command instead, which writes the file directly
+   * into the OS Downloads directory (via Android MediaStore on API 29+).
+   */
+  const triggerDownload = async (content: string, filename: string, mimeType: string): Promise<boolean> => {
+    if (isTauri()) {
+      try {
+        // Lazy-load @tauri-apps/api/core so the web build doesn't pull it in.
+        const { invoke } = await import('@tauri-apps/api/core')
+        const savedPath = await invoke<string>('save_to_downloads', {
+          fileName: filename,
+          content,
+        })
+        toast({
+          title: 'File saved',
+          description: `Saved to Downloads${typeof savedPath === 'string' && savedPath ? ` (${savedPath.split('/').pop()})` : ''}.`,
+        })
+        return true
+      } catch (err) {
+        console.error('[export] save_to_downloads failed:', err)
+        toast({
+          title: 'Export failed',
+          description: 'Could not save the file to Downloads. Please try again.',
+          variant: 'destructive',
+        })
+        return false
+      }
+    }
+
+    // Web fallback — standard blob download.
     const blob = new Blob([content], { type: mimeType })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -1186,6 +1221,7 @@ export function DoseHistory() {
     link.download = filename
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
+    return true
   }
 
   const buildPreview = (parsed: DoseLog[], fileName: string): ImportPreview => {
@@ -1199,7 +1235,7 @@ export function DoseHistory() {
     }
   }
 
-  const exportToCSV = () => {
+  const exportToCSV = async () => {
     if (doses.length === 0) return toast({ title: 'Nothing to export', variant: 'destructive' })
     const headers = ['Date', 'Time', 'Substance', 'Category', 'Amount', 'Unit', 'Route', 'Total Duration', 'Mood', 'Setting', 'Notes']
     const escapeCSV = (value: unknown) => value == null ? '""' : `"${String(value).replace(/"/g, '""')}"`
@@ -1212,15 +1248,19 @@ export function DoseHistory() {
         d.mood || '', d.setting || '', d.notes || '',
       ].map(escapeCSV).join(',')
     })
-    triggerDownload(
+    const ok = await triggerDownload(
       [headers.map(escapeCSV).join(','), ...rows].join('\n'),
       `dose-history-${format(new Date(), 'yyyy-MM-dd')}.csv`,
       'text/csv;charset=utf-8;',
     )
-    toast({ title: 'CSV exported', description: `${doses.length} dose(s) exported.` })
+    // On Tauri, triggerDownload already shows its own toast (with the saved
+    // path); only show the generic "exported" toast on the web path.
+    if (ok && !isTauri()) {
+      toast({ title: 'CSV exported', description: `${doses.length} dose(s) exported.` })
+    }
   }
 
-  const exportToJSON = () => {
+  const exportToJSON = async () => {
     if (doses.length === 0) return toast({ title: 'Nothing to export', variant: 'destructive' })
     const exportData = {
       exportedAt: new Date().toISOString(),
@@ -1243,12 +1283,14 @@ export function DoseHistory() {
         updatedAt: d.updatedAt ?? null,
       })),
     }
-    triggerDownload(
+    const ok = await triggerDownload(
       JSON.stringify(exportData, null, 2),
       `dose-history-${format(new Date(), 'yyyy-MM-dd')}.json`,
       'application/json;charset=utf-8;',
     )
-    toast({ title: 'JSON exported', description: `${doses.length} dose(s) exported.` })
+    if (ok && !isTauri()) {
+      toast({ title: 'JSON exported', description: `${doses.length} dose(s) exported.` })
+    }
   }
 
   const handleFileSelected = async (
