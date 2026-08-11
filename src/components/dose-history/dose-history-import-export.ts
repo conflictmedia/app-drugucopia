@@ -3,6 +3,7 @@
 import { DoseLog } from "@/types";
 import { toast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { isTauri } from "@/lib/tauri-bridge";
 
 export type ImportResult =
   { ok: true; doses: DoseLog[] } | { ok: false; error: string };
@@ -190,60 +191,71 @@ export function buildPreview(
   };
 }
 
-/**
- * Trigger a file download.
- *
- * Inside Tauri (Android app or desktop binary) the WebView silently ignores
- * `<a download href="blob:...">` clicks, so we delegate to the native
- * `save_to_downloads` Rust command which writes the file directly into the
- * OS Downloads directory (via Android MediaStore on API 29+). On the web
- * (PWA / browser) we fall back to the standard Blob + `<a download>` trick.
- *
- * Returns true on success, false on failure.
- */
-export async function triggerDownload(
-  content: string,
-  filename: string,
-  mimeType: string,
-): Promise<boolean> {
-  if (isTauri()) {
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const savedPath = await invoke<string>("save_to_downloads", {
-        fileName: filename,
-        content,
-      });
-      toast({
-        title: "File saved",
-        description: `Saved to Downloads${typeof savedPath === "string" && savedPath ? ` (${savedPath.split("/").pop()})` : ""}.`,
-      });
-      return true;
-    } catch (err) {
-      console.error("[export] save_to_downloads failed:", err);
-      toast({
-        title: "Export failed",
-        description: "Could not save the file to Downloads. Please try again.",
-        variant: "destructive",
-      });
-      return false;
-    }
-  }
-
-  // Web fallback — standard blob download.
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return true;
+function formatOrEmpty(value: string | Date, fmt: string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  return isNaN(d.getTime()) ? "" : format(d, fmt);
 }
 
-/** Export all doses to CSV format. */
-export async function exportToCSV(doses: DoseLog[]) {
-  if (doses.length === 0)
-    return toast({ title: "Nothing to export", variant: "destructive" });
+/** Stable, collision-resistant export file name (includes time-of-day). */
+export function exportFilename(
+  ext: "json" | "csv",
+  now: Date = new Date(),
+): string {
+  return `dose-history-${format(now, "yyyy-MM-dd-HHmmss")}.${ext}`;
+}
+
+export interface DoseHistoryExport {
+  exportedAt: string;
+  exportedAtFormatted: string;
+  totalDoses: number;
+  doses: Array<{
+    id: string;
+    timestamp: string;
+    timestampFormatted: string;
+    substanceName: string;
+    categories: string[];
+    amount: number;
+    unit: string;
+    route: string;
+    duration: DoseLog["duration"];
+    mood: string | null;
+    setting: string | null;
+    notes: string | null;
+    createdAt: string | null;
+    updatedAt: string | null;
+  }>;
+}
+
+/** Pure JSON payload for a dose-history export. Safe with invalid timestamps. */
+export function serializeDosesJSON(
+  doses: DoseLog[],
+  now: Date = new Date(),
+): DoseHistoryExport {
+  return {
+    exportedAt: now.toISOString(),
+    exportedAtFormatted: formatOrEmpty(now, "yyyy-MM-dd HH:mm:ss"),
+    totalDoses: doses.length,
+    doses: doses.map((d) => ({
+      id: d.id,
+      timestamp: d.timestamp,
+      timestampFormatted: formatOrEmpty(d.timestamp, "yyyy-MM-dd HH:mm:ss"),
+      substanceName: d.substanceName,
+      categories: d.categories ?? [],
+      amount: d.amount,
+      unit: d.unit,
+      route: d.route,
+      duration: d.duration ?? null,
+      mood: d.mood ?? null,
+      setting: d.setting ?? null,
+      notes: d.notes ?? null,
+      createdAt: d.createdAt ?? null,
+      updatedAt: d.updatedAt ?? null,
+    })),
+  };
+}
+
+/** Pure CSV string for a dose-history export. */
+export function serializeDosesCSV(doses: DoseLog[]): string {
   const headers = [
     "Date",
     "Time",
@@ -261,9 +273,10 @@ export async function exportToCSV(doses: DoseLog[]) {
     value == null ? '""' : `"${String(value).replace(/"/g, '""')}"`;
   const rows = doses.map((d) => {
     const dateObj = new Date(d.timestamp);
+    const valid = !isNaN(dateObj.getTime());
     return [
-      format(dateObj, "yyyy-MM-dd"),
-      format(dateObj, "HH:mm:ss"),
+      valid ? format(dateObj, "yyyy-MM-dd") : "",
+      valid ? format(dateObj, "HH:mm:ss") : "",
       d.substanceName,
       (d.categories || []).join("; "),
       d.amount,
@@ -277,9 +290,127 @@ export async function exportToCSV(doses: DoseLog[]) {
       .map(escapeCSV)
       .join(",");
   });
+  return [headers.map(escapeCSV).join(","), ...rows].join("\n");
+}
+
+/**
+ * Browser / WebView fallback when the native Downloads write is unavailable.
+ * Tries the Web Share API (works in many Android WebViews) then a Blob download.
+ */
+export async function fallbackDownload(
+  content: string,
+  filename: string,
+  mimeType: string,
+): Promise<boolean> {
+  const mime = mimeType.split(";")[0] || "text/plain";
+
+  try {
+    if (
+      typeof File !== "undefined" &&
+      typeof navigator !== "undefined" &&
+      typeof navigator.share === "function"
+    ) {
+      const file = new File([content], filename, { type: mime });
+      const canShare =
+        typeof navigator.canShare === "function"
+          ? navigator.canShare({ files: [file] })
+          : false;
+      if (canShare) {
+        await navigator.share({ files: [file], title: filename });
+        return true;
+      }
+    }
+  } catch {
+    // User cancelled the share sheet, or the WebView rejected files.
+  }
+
+  if (typeof document === "undefined") return false;
+
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
+/**
+ * Trigger a file download.
+ *
+ * Inside Tauri (Android app or desktop binary) the WebView silently ignores
+ * `<a download href="blob:...">` clicks, so we delegate to the native
+ * `save_to_downloads` Rust command which writes the file directly into the
+ * OS Downloads directory (via Android MediaStore on API 29+). On the web
+ * (PWA / browser) we fall back to the standard Blob + `<a download>` trick.
+ *
+ * If the native command fails we still try share-sheet / blob download so
+ * the user is not stuck with a dead "Export failed" toast.
+ *
+ * Returns true on success, false on failure.
+ */
+export async function triggerDownload(
+  content: string,
+  filename: string,
+  mimeType: string,
+): Promise<boolean> {
+  if (isTauri()) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      // Send every common argument spelling. Tauri v2 may or may not
+      // camelCase-rewrite `file_name`, and older builds expected `fileName`.
+      const savedPath = await invoke<string>("save_to_downloads", {
+        filename,
+        fileName: filename,
+        file_name: filename,
+        content,
+      });
+      const leaf =
+        typeof savedPath === "string" && savedPath
+          ? savedPath.split(/[\\/]/).pop()
+          : "";
+      toast({
+        title: "File saved",
+        description: leaf
+          ? `Saved to Downloads (${leaf}).`
+          : "Saved to Downloads.",
+      });
+      return true;
+    } catch (err) {
+      console.error("[export] save_to_downloads failed:", err);
+      const fallbackOk = await fallbackDownload(content, filename, mimeType);
+      if (fallbackOk) {
+        toast({
+          title: "File exported",
+          description:
+            "Could not write directly to Downloads, so the file was shared or downloaded instead.",
+        });
+        return true;
+      }
+      toast({
+        title: "Export failed",
+        description: "Could not save the file to Downloads. Please try again.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  }
+
+  const ok = await fallbackDownload(content, filename, mimeType);
+  return ok;
+}
+
+/** Export all doses to CSV format. */
+export async function exportToCSV(doses: DoseLog[]) {
+  if (doses.length === 0)
+    return toast({ title: "Nothing to export", variant: "destructive" });
   const ok = await triggerDownload(
-    [headers.map(escapeCSV).join(","), ...rows].join("\n"),
-    `dose-history-${format(new Date(), "yyyy-MM-dd")}.csv`,
+    serializeDosesCSV(doses),
+    exportFilename("csv"),
     "text/csv;charset=utf-8;",
   );
   if (ok && !isTauri()) {
@@ -294,30 +425,9 @@ export async function exportToCSV(doses: DoseLog[]) {
 export async function exportToJSON(doses: DoseLog[]) {
   if (doses.length === 0)
     return toast({ title: "Nothing to export", variant: "destructive" });
-  const exportData = {
-    exportedAt: new Date().toISOString(),
-    exportedAtFormatted: format(new Date(), "yyyy-MM-dd HH:mm:ss"),
-    totalDoses: doses.length,
-    doses: doses.map((d) => ({
-      id: d.id,
-      timestamp: d.timestamp,
-      timestampFormatted: format(new Date(d.timestamp), "yyyy-MM-dd HH:mm:ss"),
-      substanceName: d.substanceName,
-      categories: d.categories ?? [],
-      amount: d.amount,
-      unit: d.unit,
-      route: d.route,
-      duration: d.duration ?? null,
-      mood: d.mood ?? null,
-      setting: d.setting ?? null,
-      notes: d.notes ?? null,
-      createdAt: d.createdAt ?? null,
-      updatedAt: d.updatedAt ?? null,
-    })),
-  };
   const ok = await triggerDownload(
-    JSON.stringify(exportData, null, 2),
-    `dose-history-${format(new Date(), "yyyy-MM-dd")}.json`,
+    JSON.stringify(serializeDosesJSON(doses), null, 2),
+    exportFilename("json"),
     "application/json;charset=utf-8;",
   );
   if (ok && !isTauri()) {

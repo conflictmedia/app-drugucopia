@@ -117,8 +117,22 @@ if [ -z "$KOTLIN_SRC" ]; then
   exit 1
 fi
 
+# Rewrite the Kotlin `package` line to match the generated applicationId
+# (com.drugucopia.app for release, com.drugucopiadev.app for dev).
+rewrite_kotlin_package() {
+  local dest="$1"
+  local rel pkg
+  rel=$(printf '%s' "$KOTLIN_SRC" | sed 's|.*/java/||')
+  pkg="${rel//\//.}"
+  if [[ "$pkg" == *.* ]] && [ -f "$dest" ]; then
+    sed -i "s/^package .*/package $pkg/" "$dest" || true
+    info "Set $(basename "$dest") package to $pkg"
+  fi
+}
+
 info "Installing OngoingNotificationHelper.kt to $KOTLIN_SRC"
 cp "$SCRIPT_DIR/android-ongoing-notif/OngoingNotificationHelper.kt" "$KOTLIN_SRC/"
+rewrite_kotlin_package "$KOTLIN_SRC/OngoingNotificationHelper.kt"
 ok "Installed OngoingNotificationHelper.kt"
 
 # ─── 1a. Install DownloadsHelper.kt (native "Export to JSON/CSV" target) ──────
@@ -128,6 +142,7 @@ ok "Installed OngoingNotificationHelper.kt"
 if [ -f "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" ]; then
   info "Installing DownloadsHelper.kt to $KOTLIN_SRC"
   cp "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" "$KOTLIN_SRC/"
+  rewrite_kotlin_package "$KOTLIN_SRC/DownloadsHelper.kt"
   ok "Installed DownloadsHelper.kt"
 fi
 

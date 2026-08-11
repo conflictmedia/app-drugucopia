@@ -7,157 +7,109 @@
 /// file-path write (API < 29), going through the `DownloadsHelper` Kotlin
 /// object via JNI.
 ///
-/// On desktop (Linux / macOS / Windows) it writes to the OS Downloads folder,
-/// which is useful when the app is packaged as a Tauri desktop binary.
+/// On desktop (Linux / macOS / Windows) and iOS it writes to the OS Downloads
+/// folder (with Documents / app-data fallbacks).
 ///
 /// On the web (PWA) this command is never invoked — the caller falls back to
 /// the browser blob-URL download technique.
 use tauri::command;
+use tauri::Manager;
 
-/// Save `content` as `file_name` in the user's Downloads directory.
+/// Save `content` as `filename` in the user's Downloads directory.
+///
+/// Accepts `filename` / `file_name` / `fileName` so the JS invoke payload
+/// matches regardless of Tauri's camelCase argument rewrite.
 ///
 /// Returns the absolute path (or MediaStore URI on Android 10+) on success.
 #[command]
 pub fn save_to_downloads(
     app: tauri::AppHandle,
-    file_name: String,
     content: String,
+    filename: Option<String>,
+    file_name: Option<String>,
 ) -> Result<String, String> {
+    let requested = filename
+        .or(file_name)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "export.bin".to_string());
+
     // Basic sanitisation: strip path separators — only the file name is allowed.
-    let safe_name = std::path::Path::new(&file_name)
+    let safe_name = std::path::Path::new(&requested)
         .file_name()
         .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "export.bin".to_string());
 
     #[cfg(target_os = "android")]
     {
-        use std::sync::mpsc;
-        use std::time::Duration;
-        use tauri::Manager;
-
-        let (tx, rx) = mpsc::channel();
-
-        let webview_window = match app.get_webview_window("main") {
-            Some(w) => w,
-            None => {
-                return Err("no main webview window available".into());
+        match save_android(&app, &safe_name, &content) {
+            Ok(path) => Ok(path),
+            Err(e) => {
+                eprintln!("[downloads] android helper failed: {e}");
+                // Last resort: write somewhere the app can read. Better than a
+                // hard failure if MediaStore / JNI is unavailable.
+                write_to_first_writable(&app, &safe_name, &content).map_err(|fallback| {
+                    format!("android save failed ({e}); fallback also failed ({fallback})")
+                })
             }
-        };
-
-        let file_name = safe_name.clone();
-        let content = content.clone();
-
-        let result = webview_window.with_webview(move |wv| {
-            wv.jni_handle().exec(move |env, activity, _webview| {
-                let result: Result<String, String> = (|| {
-                    use jni::objects::JValue;
-
-                    let j_name = match env.new_string(&file_name) {
-                        Ok(s) => s,
-                        Err(e) => return Err(format!("new_string name: {e:?}")),
-                    };
-                    let j_content = match env.new_string(&content) {
-                        Ok(s) => s,
-                        Err(e) => return Err(format!("new_string content: {e:?}")),
-                    };
-
-                    let class = match env.find_class("com/drugucopiadev/app/DownloadsHelper") {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = env.exception_clear();
-                            return Err(format!("find_class DownloadsHelper: {e:?}"));
-                        }
-                    };
-
-                    let call_result = env.call_static_method(
-                        &class,
-                        "saveToDownloads",
-                        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-                        &[
-                            JValue::Object(&activity),
-                            JValue::Object(&j_name),
-                            JValue::Object(&j_content),
-                        ],
-                    );
-
-                    // Always check for a Java exception before touching the result.
-                    if let Ok(true) = env.exception_check() {
-                        let _ = env.exception_describe();
-                        let _ = env.exception_clear();
-                        eprintln!(
-                            "[downloads] Java exception in saveToDownloads() — cleared to prevent crash"
-                        );
-                        return Err("java exception in saveToDownloads()".into());
-                    }
-
-                    let jvalue = match call_result {
-                        Ok(v) => v,
-                        Err(e) => return Err(format!("call saveToDownloads: {e:?}")),
-                    };
-
-                    let jobj = match jvalue.l() {
-                        Ok(o) => o,
-                        Err(e) => return Err(format!("cast result to object: {e:?}")),
-                    };
-
-                    // A null return means the Kotlin side refused (e.g. permission
-                    // denied on pre-Q devices). Surface it as an error to the JS side.
-                    if jobj.is_null() {
-                        return Err("DownloadsHelper.saveToDownloads() returned null".into());
-                    }
-
-                    let jstr: jni::objects::JString = jobj.into();
-                    let rust_string: String = match env.get_string(&jstr) {
-                        Ok(s) => s.into(),
-                        Err(e) => return Err(format!("get_string: {e:?}")),
-                    };
-                    Ok(rust_string)
-                })();
-
-                let _ = tx.send(result);
-            });
-        });
-
-        if let Err(e) = result {
-            eprintln!("[downloads] with_webview failed: {e}");
-            return Err(format!("with_webview failed: {e}"));
-        }
-
-        match rx.recv_timeout(Duration::from_millis(3000)) {
-            Ok(inner) => inner,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                Err("JNI call timed out after 3000ms".into())
-            }
-            Err(e) => Err(format!("channel recv failed: {e:?}")),
         }
     }
 
     #[cfg(not(target_os = "android"))]
     {
-        let _ = app; // unused on desktop
-
-        let downloads_dir = desktop_downloads_dir()
-            .ok_or_else(|| "Could not determine Downloads directory".to_string())?;
-
-        if !downloads_dir.exists() {
-            std::fs::create_dir_all(&downloads_dir)
-                .map_err(|e| format!("Failed to create Downloads dir: {e}"))?;
-        }
-
-        let file_path = downloads_dir.join(&safe_name);
-        std::fs::write(&file_path, &content)
-            .map_err(|e| format!("Failed to write file: {e}"))?;
-
-        Ok(file_path.to_string_lossy().into_owned())
+        write_to_first_writable(&app, &safe_name, &content)
     }
 }
 
-/// Resolve the OS Downloads directory on desktop platforms without pulling in
-/// the `dirs` crate (keeps the dependency footprint unchanged).
-#[cfg(not(target_os = "android"))]
-fn desktop_downloads_dir() -> Option<std::path::PathBuf> {
-    // 1. Honor an explicit $DOWNLOADS / XDG_DOWNLOAD_DIR if the user set one.
+/// Try Tauri's path resolver, then $HOME/Downloads, then Documents / app data.
+fn write_to_first_writable(
+    app: &tauri::AppHandle,
+    safe_name: &str,
+    content: &str,
+) -> Result<String, String> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+    if let Ok(dir) = app.path().download_dir() {
+        candidates.push(dir);
+    }
+    if let Some(dir) = env_downloads_dir() {
+        candidates.push(dir);
+    }
+    if let Ok(dir) = app.path().document_dir() {
+        candidates.push(dir);
+    }
+    if let Ok(dir) = app.path().app_local_data_dir() {
+        candidates.push(dir.join("exports"));
+    }
+    if let Ok(dir) = app.path().app_cache_dir() {
+        candidates.push(dir.join("exports"));
+    }
+
+    // Dedup while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|p| seen.insert(p.clone()));
+
+    if candidates.is_empty() {
+        return Err("Could not determine a writable export directory".to_string());
+    }
+
+    let mut last_err = "No writable export directory found".to_string();
+    for dir in candidates {
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            last_err = format!("Failed to create {}: {e}", dir.display());
+            continue;
+        }
+        let file_path = dir.join(safe_name);
+        match std::fs::write(&file_path, content) {
+            Ok(()) => return Ok(file_path.to_string_lossy().into_owned()),
+            Err(e) => last_err = format!("Failed to write {}: {e}", file_path.display()),
+        }
+    }
+    Err(last_err)
+}
+
+fn env_downloads_dir() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("XDG_DOWNLOAD_DIR") {
         if !p.is_empty() {
             return Some(std::path::PathBuf::from(p));
@@ -169,7 +121,6 @@ fn desktop_downloads_dir() -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. Look for $HOME/Downloads (Linux/macOS) or %USERPROFILE%\Downloads (Windows).
     let home_var = if cfg!(target_os = "windows") {
         "USERPROFILE"
     } else {
@@ -182,3 +133,153 @@ fn desktop_downloads_dir() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(home).join("Downloads"))
 }
 
+#[cfg(target_os = "android")]
+fn save_android(app: &tauri::AppHandle, safe_name: &str, content: &str) -> Result<String, String> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // Write a temp file first so JNI only has to pass two short strings.
+    // Large JSON histories used to be copied into a Java String, which is
+    // slow and can trip the 3s timeout.
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .or_else(|_| app.path().app_local_data_dir())
+        .map_err(|e| format!("no cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("create cache dir {}: {e}", cache_dir.display()))?;
+    let tmp_path = cache_dir.join(format!("export-{safe_name}"));
+    std::fs::write(&tmp_path, content).map_err(|e| format!("write temp export: {e}"))?;
+    let tmp_path_str = tmp_path.to_string_lossy().into_owned();
+
+    let (tx, rx) = mpsc::channel();
+
+    let webview_window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no main webview window available".to_string())?;
+
+    let file_name = safe_name.to_string();
+    let content_owned = content.to_string();
+
+    let result = webview_window.with_webview(move |wv| {
+        wv.jni_handle().exec(move |env, activity, _webview| {
+            // All JNI must stay in this closure. Helper fns that bind
+            // JNIEnv<'a> + JObject<'a> to one lifetime fail to compile
+            // against Tauri's exec callback (`&mut JNIEnv<'2>`, `&JObject<'1>`).
+            let result: Result<String, String> = (|| {
+                use jni::objects::JValue;
+
+                let j_name = match env.new_string(&file_name) {
+                    Ok(s) => s,
+                    Err(e) => return Err(format!("new_string name: {e:?}")),
+                };
+                let j_tmp = match env.new_string(&tmp_path_str) {
+                    Ok(s) => s,
+                    Err(e) => return Err(format!("new_string tmp: {e:?}")),
+                };
+
+                // Try both applicationIds used by this project. The patch
+                // script rewrites the Kotlin package to match the build.
+                let class = match env.find_class("com/drugucopiadev/app/DownloadsHelper") {
+                    Ok(c) => c,
+                    Err(_) => {
+                        let _ = env.exception_clear();
+                        match env.find_class("com/drugucopia/app/DownloadsHelper") {
+                            Ok(c) => c,
+                            Err(e) => {
+                                let _ = env.exception_clear();
+                                return Err(format!("find_class DownloadsHelper: {e:?}"));
+                            }
+                        }
+                    }
+                };
+
+                // Prefer the file-based helper (small JNI payload).
+                let file_call = env.call_static_method(
+                    &class,
+                    "saveFileToDownloads",
+                    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                    &[
+                        JValue::Object(&activity),
+                        JValue::Object(&j_name),
+                        JValue::Object(&j_tmp),
+                    ],
+                );
+                if let Ok(true) = env.exception_check() {
+                    let _ = env.exception_describe();
+                    let _ = env.exception_clear();
+                } else if let Ok(jvalue) = file_call {
+                    if let Ok(jobj) = jvalue.l() {
+                        if !jobj.is_null() {
+                            let jstr: jni::objects::JString = jobj.into();
+                            // Copy into an owned String before `jstr` drops —
+                            // JavaStr borrows jstr and cannot outlive it.
+                            let owned: Result<String, _> =
+                                env.get_string(&jstr).map(|s| s.into());
+                            if let Ok(path) = owned {
+                                return Ok(path);
+                            }
+                        }
+                    }
+                }
+
+                // Fall back to the in-memory string helper.
+                let j_content = match env.new_string(&content_owned) {
+                    Ok(s) => s,
+                    Err(e) => return Err(format!("new_string content: {e:?}")),
+                };
+                let string_call = env.call_static_method(
+                    &class,
+                    "saveToDownloads",
+                    "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                    &[
+                        JValue::Object(&activity),
+                        JValue::Object(&j_name),
+                        JValue::Object(&j_content),
+                    ],
+                );
+
+                if let Ok(true) = env.exception_check() {
+                    let _ = env.exception_describe();
+                    let _ = env.exception_clear();
+                    return Err("java exception in saveToDownloads()".into());
+                }
+
+                let jvalue = match string_call {
+                    Ok(v) => v,
+                    Err(e) => return Err(format!("call saveToDownloads: {e:?}")),
+                };
+                let jobj = match jvalue.l() {
+                    Ok(o) => o,
+                    Err(e) => return Err(format!("cast result to object: {e:?}")),
+                };
+                if jobj.is_null() {
+                    return Err("DownloadsHelper.saveToDownloads() returned null".into());
+                }
+                let jstr: jni::objects::JString = jobj.into();
+                // Copy into an owned String before `jstr` drops.
+                let owned: Result<String, _> = env.get_string(&jstr).map(|s| s.into());
+                match owned {
+                    Ok(path) => Ok(path),
+                    Err(e) => Err(format!("get_string: {e:?}")),
+                }
+            })();
+
+            let _ = tx.send(result);
+        });
+    });
+
+    if let Err(e) = result {
+        eprintln!("[downloads] with_webview failed: {e}");
+        return Err(format!("with_webview failed: {e}"));
+    }
+
+    match rx.recv_timeout(Duration::from_millis(10_000)) {
+        Ok(inner) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            inner
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => Err("JNI call timed out after 10000ms".into()),
+        Err(e) => Err(format!("channel recv failed: {e:?}")),
+    }
+}

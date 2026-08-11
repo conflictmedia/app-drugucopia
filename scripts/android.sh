@@ -317,6 +317,37 @@ if [ -f "$PROJECT_ROOT/scripts/patch-android.sh" ]; then
   fi
 fi
 
+# Always refresh Kotlin helpers. The full patch script above is skipped on an
+# already-initialized local Android project, which is how DownloadsHelper.kt
+# never made it into existing gen/android trees and JSON export failed with
+# "Could not save the file to Downloads".
+install_kotlin_helpers() {
+  local android_dir="$GEN_ANDROID_DIR"
+  local src_dir="$PROJECT_ROOT/scripts/android-ongoing-notif"
+  [ -d "$android_dir/app/src/main/java" ] || return 0
+  [ -d "$src_dir" ] || return 0
+
+  local kotlin_src
+  kotlin_src=$(find "$android_dir/app/src/main/java" -type d -name "app" | head -1)
+  [ -n "$kotlin_src" ] || return 0
+
+  local rel pkg
+  rel=$(printf '%s' "$kotlin_src" | sed 's|.*/java/||')
+  pkg="${rel//\//.}"
+
+  local f dest
+  for f in "$src_dir"/*.kt; do
+    [ -f "$f" ] || continue
+    dest="$kotlin_src/$(basename "$f")"
+    cp "$f" "$dest"
+    if [[ "$pkg" == *.* ]]; then
+      sed -i "s/^package .*/package $pkg/" "$dest" || true
+    fi
+    ok "Installed $(basename "$f") → $dest (package $pkg)"
+  done
+}
+install_kotlin_helpers
+
 # Verify Firebase env vars for release builds
 if [ "$ACTION" = "build" ]; then
   info "Checking Firebase env vars for build..."
