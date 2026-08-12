@@ -2,6 +2,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Patches the Tauri-generated Android project with:
 #   - Ongoing notification helper (unswipeable timeline notifications)
+#   - Public Downloads helper for JSON/CSV exports
 #   - Dark status bar matching the app theme (#0a0a0a)
 #   - Transparent status bar so content can extend behind it
 #   - Proper safe area inset handling
@@ -13,7 +14,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ANDROID_DIR="$SCRIPT_DIR/../src-tauri/gen/android"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ANDROID_DIR="$PROJECT_ROOT/src-tauri/gen/android"
 
 if [ ! -d "$ANDROID_DIR" ]; then
   echo "Error: Android project not found at $ANDROID_DIR"
@@ -26,6 +28,7 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 info()  { echo -e "${CYAN}[patch]${NC} $*"; }
+ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
 
 # --- ICON FIX: Sync launcher icons from public/ to Android mipmap ---
 resolve_icon_src() {
@@ -102,20 +105,55 @@ PYEOF
 fi
 
 
-ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
-
 # ─── 1. Install OngoingNotificationHelper.kt ──────────────────────────────────
-# Find the Kotlin source directory (varies by project name)
-KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -type d -maxdepth 4 | head -1)
-
-if [ -z "$KOTLIN_SRC" ]; then
-  echo "Error: Could not find Kotlin source directory"
+# Put helpers beside the generated MainActivity. Searching for an arbitrary
+# directory named "app" can select the wrong source folder and yield an APK
+# that builds successfully but does not contain the JNI helper classes.
+MAIN_ACTIVITY=$(find "$ANDROID_DIR/app/src/main/java" -type f -name "MainActivity.kt" | head -1)
+if [ -z "$MAIN_ACTIVITY" ]; then
+  echo "Error: Could not find generated MainActivity.kt"
   exit 1
 fi
+KOTLIN_SRC=$(dirname "$MAIN_ACTIVITY")
+
+# Rewrite the Kotlin `package` line to match the generated applicationId
+# (com.drugucopia.app for release, com.drugucopiadev.app for dev).
+rewrite_kotlin_package() {
+  local dest="$1"
+  local rel pkg
+  rel=$(printf '%s' "$KOTLIN_SRC" | sed 's|.*/java/||')
+  pkg="${rel//\//.}"
+  if [[ "$pkg" == *.* ]] && [ -f "$dest" ]; then
+    sed -i "s/^package .*/package $pkg/" "$dest" || true
+    info "Set $(basename "$dest") package to $pkg"
+  fi
+}
 
 info "Installing OngoingNotificationHelper.kt to $KOTLIN_SRC"
 cp "$SCRIPT_DIR/android-ongoing-notif/OngoingNotificationHelper.kt" "$KOTLIN_SRC/"
+rewrite_kotlin_package "$KOTLIN_SRC/OngoingNotificationHelper.kt"
 ok "Installed OngoingNotificationHelper.kt"
+
+# ─── 1a. Install DownloadsHelper.kt (native "Export to JSON/CSV" target) ──────
+# Android WebView silently ignores <a download> for blob: URLs, so the export
+# buttons in the Track page history tab need a native fallback that writes
+# directly to the public Downloads directory via MediaStore.
+if [ -f "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" ]; then
+  info "Installing DownloadsHelper.kt to $KOTLIN_SRC"
+  cp "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" "$KOTLIN_SRC/"
+  rewrite_kotlin_package "$KOTLIN_SRC/DownloadsHelper.kt"
+  ok "Installed DownloadsHelper.kt"
+fi
+
+# Release builds run R8. These helpers have no Kotlin/Java callers because Rust
+# reaches them by class name through JNI, so R8 otherwise removes or renames
+# them. Tauri's generated release config includes **/*.pro files under app/.
+PROGUARD_FILE="$ANDROID_DIR/app/tauri-jni-helpers.pro"
+cat > "$PROGUARD_FILE" <<'EOF'
+-keep class **.DownloadsHelper { *; }
+-keep class **.OngoingNotificationHelper { *; }
+EOF
+ok "Installed R8 keep rules for JNI helper classes"
 
 # ─── 1b. Ensure INTERNET permission exists (critical for Firebase on Android)
 MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
@@ -134,6 +172,14 @@ if [ -f "$MANIFEST" ]; then
     info "Adding ACCESS_NETWORK_STATE permission"
     sed -i 's/<uses-permission android:name="android.permission.INTERNET" \/>/<uses-permission android:name="android.permission.INTERNET" \/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" \/>/' "$MANIFEST"
     ok "Added ACCESS_NETWORK_STATE permission"
+  fi
+
+  # MediaStore needs no storage permission on Android 10+, but the helper's
+  # direct public-Downloads path still supports Android 9 and earlier.
+  if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
+    info "Adding legacy WRITE_EXTERNAL_STORAGE permission (Android 9 and earlier only)"
+    sed -i 's/<application/<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" \/>\n    <application/' "$MANIFEST"
+    ok "Added legacy storage permission"
   fi
 fi
 
@@ -192,6 +238,7 @@ echo -e "${GREEN}═════════════════════
 echo ""
 echo "  Installed:"
 echo "    • OngoingNotificationHelper.kt (unswipeable notifications)"
+echo "    • DownloadsHelper.kt (native Export-to-Downloads for JSON/CSV)"
 echo "    • Dark status/nav bar theme"
 echo "    • Edge-to-edge display mode"
 echo "    • INTERNET + ACCESS_NETWORK_STATE permissions (Firebase)"

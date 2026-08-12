@@ -1,4 +1,4 @@
-package com.drugucopia.app
+package com.drugucopiadev.app
 
 import android.Manifest
 import android.app.NotificationChannel
@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.annotation.Keep
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
@@ -21,6 +22,8 @@ import androidx.core.content.ContextCompat
  *
  * Called from Rust via JNI (see lib.rs show_ongoing_notification command).
  */
+// Invoked only from Rust/JNI; keep the stable class and method names in R8 builds.
+@Keep
 object OngoingNotificationHelper {
     private const val CHANNEL_ID = "drugucopia_timeline"
     private const val CHANNEL_NAME = "Active Timelines"
