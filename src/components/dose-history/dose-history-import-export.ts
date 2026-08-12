@@ -293,11 +293,8 @@ export function serializeDosesCSV(doses: DoseLog[]): string {
   return [headers.map(escapeCSV).join(","), ...rows].join("\n");
 }
 
-/**
- * Browser / WebView fallback when the native Downloads write is unavailable.
- * Tries the Web Share API (works in many Android WebViews) then a Blob download.
- */
-export async function fallbackDownload(
+/** Try to hand an export to the OS share sheet. */
+export async function shareExport(
   content: string,
   filename: string,
   mimeType: string,
@@ -306,24 +303,34 @@ export async function fallbackDownload(
 
   try {
     if (
-      typeof File !== "undefined" &&
-      typeof navigator !== "undefined" &&
-      typeof navigator.share === "function"
+      typeof File === "undefined" ||
+      typeof navigator === "undefined" ||
+      typeof navigator.share !== "function"
     ) {
-      const file = new File([content], filename, { type: mime });
-      const canShare =
-        typeof navigator.canShare === "function"
-          ? navigator.canShare({ files: [file] })
-          : false;
-      if (canShare) {
-        await navigator.share({ files: [file], title: filename });
-        return true;
-      }
+      return false;
     }
-  } catch {
-    // User cancelled the share sheet, or the WebView rejected files.
-  }
 
+    const file = new File([content], filename, { type: mime });
+    const canShare =
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [file] });
+    if (!canShare) return false;
+
+    await navigator.share({ files: [file], title: filename });
+    return true;
+  } catch {
+    // The user cancelled, or this WebView rejected file sharing.
+    return false;
+  }
+}
+
+/** Browser fallback: prefer Web Share, then use a normal Blob download. */
+export async function fallbackDownload(
+  content: string,
+  filename: string,
+  mimeType: string,
+): Promise<boolean> {
+  if (await shareExport(content, filename, mimeType)) return true;
   if (typeof document === "undefined") return false;
 
   const blob = new Blob([content], { type: mimeType });
@@ -348,8 +355,10 @@ export async function fallbackDownload(
  * OS Downloads directory (via Android MediaStore on API 29+). On the web
  * (PWA / browser) we fall back to the standard Blob + `<a download>` trick.
  *
- * If the native command fails we still try share-sheet / blob download so
- * the user is not stuck with a dead "Export failed" toast.
+ * If the native command fails inside Tauri, only the OS share sheet is used as
+ * a fallback. We intentionally do not click a Blob download link there:
+ * Android WebView can silently ignore that click, which previously produced a
+ * positive toast even though no file had been created.
  *
  * Returns true on success, false on failure.
  */
@@ -369,31 +378,32 @@ export async function triggerDownload(
         file_name: filename,
         content,
       });
-      const leaf =
-        typeof savedPath === "string" && savedPath
-          ? savedPath.split(/[\\/]/).pop()
-          : "";
+      if (typeof savedPath !== "string" || savedPath.trim() === "") {
+        throw new Error("Native export returned no saved location");
+      }
       toast({
         title: "File saved",
-        description: leaf
-          ? `Saved to Downloads (${leaf}).`
-          : "Saved to Downloads.",
+        description: `Saved to Downloads/${filename}.`,
       });
       return true;
     } catch (err) {
       console.error("[export] save_to_downloads failed:", err);
-      const fallbackOk = await fallbackDownload(content, filename, mimeType);
-      if (fallbackOk) {
+
+      // Sharing is observable: navigator.share resolves only after the share
+      // action completes. A Blob-link click is not observable in WebView and
+      // must not be reported as a successful Android export.
+      if (await shareExport(content, filename, mimeType)) {
         toast({
-          title: "File exported",
-          description:
-            "Could not write directly to Downloads, so the file was shared or downloaded instead.",
+          title: "File shared",
+          description: `${filename} was sent using the Android share sheet.`,
         });
         return true;
       }
+
       toast({
         title: "Export failed",
-        description: "Could not save the file to Downloads. Please try again.",
+        description:
+          "Android could not create the file in Downloads. No file was saved.",
         variant: "destructive",
       });
       return false;

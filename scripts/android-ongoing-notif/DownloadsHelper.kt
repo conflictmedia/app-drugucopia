@@ -2,139 +2,225 @@ package com.drugucopiadev.app
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
+import androidx.annotation.Keep
+import java.io.ByteArrayInputStream
 import java.io.File
-import java.io.OutputStream
+import java.io.InputStream
 
 /**
- * Writes a text file (e.g. JSON / CSV exports) into the user's public
- * **Downloads** directory on Android.
+ * Writes JSON/CSV exports to Android's public Downloads collection.
  *
- * Why this exists:
- *  The Tauri Android WebView silently ignores `<a download href="blob:...">`
- *  clicks, so the standard web export technique used by the dose-history UI
- *  produces nothing on device. This helper is invoked from Rust via JNI
- *  (see `src-tauri/src/downloads.rs` → `save_to_downloads` command), which is
- *  in turn invoked from TypeScript when `isTauri()` is true.
+ * Android WebView does not reliably support downloads whose source is a blob
+ * URL. Rust therefore invokes this helper through JNI. Android 10+ uses
+ * MediaStore (no storage permission is needed); older Android versions write
+ * to the public Downloads directory and need WRITE_EXTERNAL_STORAGE.
  *
- * Behaviour:
- *  - API 29+ (Android 10+): uses the `MediaStore.Downloads` collection so the
- *    file is visible in the system Files / Downloads app without requiring
- *    `WRITE_EXTERNAL_STORAGE` (scoped storage friendly).
- *  - API < 29: writes directly to
- *    `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)`.
- *  - If a file with the same name already exists in Downloads, it is replaced
- *    (matching the user expectation for an "Export" action).
- *
- * Returns:
- *  - The `content://` URI (API 29+) or absolute file path (API < 29) on success.
- *  - `null` on failure — the Rust side surfaces this as an error to JS.
+ * A non-null return is deliberately reserved for a verified public write. The
+ * Rust/TypeScript layers use that distinction to avoid claiming that a file is
+ * in Downloads when it was only written to app-private storage.
  */
+// Release APKs enable R8. This class is reached only through JNI, so without
+// @Keep the shrinker sees no Kotlin/Java caller and removes it from the APK.
+@Keep
 object DownloadsHelper {
+    private const val TAG = "DownloadsHelper"
 
-    /**
-     * Save [content] as [fileName] in the public Downloads directory.
-     *
-     * @param context  Android context (Activity) — passed in from Rust via JNI.
-     * @param fileName File name only (no path); e.g. "dose-history-2026-08-11.json".
-     * @param content  UTF-8 text content to write.
-     * @return The URI/path of the saved file, or null on failure.
-     */
+    /** Save an in-memory UTF-8 string. Kept for compatibility with older Rust builds. */
     @JvmStatic
     fun saveToDownloads(context: Context, fileName: String, content: String): String? {
-        return try {
-            // Strip any path components sneaked in — only the file name is allowed.
-            val safeName = File(fileName).name
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        return save(context, fileName, ByteArrayInputStream(bytes), bytes.size.toLong())
+    }
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                saveViaMediaStore(context, safeName, content)
-            } else {
-                saveViaDirectPath(safeName, content)
+    /**
+     * Copy a temporary app-private file into public Downloads.
+     *
+     * Passing a path rather than the whole JSON document through JNI avoids
+     * large Java strings and makes large dose-history exports reliable.
+     */
+    @JvmStatic
+    fun saveFileToDownloads(context: Context, fileName: String, sourcePath: String): String? {
+        return try {
+            val source = File(sourcePath)
+            if (!source.isFile) {
+                throw IllegalArgumentException("Export source does not exist: $sourcePath")
+            }
+            source.inputStream().buffered().use { input ->
+                saveOrThrow(context, safeFileName(fileName), input, source.length())
             }
         } catch (e: Exception) {
-            android.util.Log.e("DownloadsHelper", "saveToDownloads failed for $fileName", e)
+            Log.e(TAG, "saveFileToDownloads failed for $fileName", e)
             null
         }
     }
 
-    // ─── Android 10+ (API 29+): MediaStore ─────────────────────────────────────
-
-    private fun saveViaMediaStore(context: Context, fileName: String, content: String): String {
-        val resolver = context.contentResolver
-        val mimeType = mimeFor(fileName)
-
-        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-
-        // Replace any existing file with the same name so exports always
-        // reflect the latest data (otherwise MediaStore would auto-rename
-        // to "dose-history-2026-08-11 (1).json" etc.).
-        try {
-            resolver.delete(
-                collection,
-                "${MediaStore.Downloads.DISPLAY_NAME} = ?",
-                arrayOf(fileName)
-            )
-        } catch (_: Exception) {
-            // Deletion of a non-existing row is a no-op; ignore failures here.
+    private fun save(
+        context: Context,
+        fileName: String,
+        input: InputStream,
+        expectedBytes: Long
+    ): String? {
+        return try {
+            input.use {
+                saveOrThrow(context, safeFileName(fileName), it, expectedBytes)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "saveToDownloads failed for $fileName", e)
+            null
         }
+    }
 
+    private fun saveOrThrow(
+        context: Context,
+        safeName: String,
+        input: InputStream,
+        expectedBytes: Long
+    ): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            return saveViaMediaStore(context, safeName, input, expectedBytes)
+        }
+        return saveViaDirectPath(context, safeName, input, expectedBytes)
+    }
+
+    // Android 10+ (API 29+): scoped-storage-safe public Downloads write.
+    private fun saveViaMediaStore(
+        context: Context,
+        fileName: String,
+        input: InputStream,
+        expectedBytes: Long
+    ): String {
+        val resolver = context.contentResolver
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
-            put(MediaStore.Downloads.MIME_TYPE, mimeType)
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-            put(MediaStore.Downloads.IS_PENDING, 1)
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(fileName))
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
 
         val uri: Uri = resolver.insert(collection, values)
-            ?: throw RuntimeException("MediaStore.insert() returned null for $fileName")
+            ?: throw IllegalStateException("MediaStore refused to create Downloads/$fileName")
 
         try {
-            resolver.openOutputStream(uri, "w")?.use { os: OutputStream ->
-                os.write(content.toByteArray(Charsets.UTF_8))
-                os.flush()
-            } ?: throw RuntimeException("Failed to open output stream for $uri")
+            val copied = resolver.openOutputStream(uri, "w")?.use { output ->
+                val count = input.copyTo(output)
+                output.flush()
+                count
+            } ?: throw IllegalStateException("Could not open MediaStore output stream for $uri")
 
-            // Mark the entry as complete — without this the file remains
-            // "pending" and is invisible to other apps.
-            val finalize = ContentValues().apply {
-                put(MediaStore.Downloads.IS_PENDING, 0)
+            if (copied != expectedBytes) {
+                throw IllegalStateException("Incomplete export: copied $copied of $expectedBytes bytes")
             }
-            resolver.update(uri, finalize, null, null)
+
+            // Pending rows are hidden from Files and other apps. Do not report
+            // success unless MediaStore confirms that the row was published.
+            val published = resolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
+                null,
+                null
+            )
+            if (published != 1) {
+                throw IllegalStateException("MediaStore did not publish $uri (updated $published rows)")
+            }
+
+            // Verify the published row still exists, has the expected name and
+            // is no longer pending before returning success to Rust.
+            val projection = arrayOf(
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.IS_PENDING
+            )
+            resolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) {
+                    throw IllegalStateException("Published export cannot be queried: $uri")
+                }
+                val actualName = cursor.getString(0)
+                val actualSize = cursor.getLong(1)
+                val pending = cursor.getInt(2)
+                if (actualName != fileName || actualSize != expectedBytes || pending != 0) {
+                    throw IllegalStateException(
+                        "Export verification failed (name=$actualName, size=$actualSize, pending=$pending)"
+                    )
+                }
+            } ?: throw IllegalStateException("MediaStore returned no cursor for $uri")
+
+            return "${Environment.DIRECTORY_DOWNLOADS}/$fileName"
         } catch (e: Exception) {
-            // Clean up the half-created entry to avoid leaving a pending
-            // file lying around in MediaStore.
+            // Never leave a broken/pending entry in the Downloads collection.
             try { resolver.delete(uri, null, null) } catch (_: Exception) {}
             throw e
         }
-
-        return uri.toString()
     }
 
-    // ─── Android 9 and earlier: direct file path ───────────────────────────────
-
-    private fun saveViaDirectPath(fileName: String, content: String): String {
-        @Suppress("DEPRECATION")
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (!downloadsDir.exists()) {
-            downloadsDir.mkdirs()
+    // Android 9 and earlier: public path (manifest permission required).
+    @Suppress("DEPRECATION")
+    private fun saveViaDirectPath(
+        context: Context,
+        fileName: String,
+        input: InputStream,
+        expectedBytes: Long
+    ): String {
+        if (Environment.getExternalStorageState() != Environment.MEDIA_MOUNTED) {
+            throw IllegalStateException("Shared storage is not mounted")
         }
 
-        val file = File(downloadsDir, fileName)
-        // Replace existing file (matches MediaStore branch behaviour).
-        if (file.exists()) {
-            file.delete()
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(
+            Environment.DIRECTORY_DOWNLOADS
+        )
+        if ((!downloadsDir.exists() && !downloadsDir.mkdirs()) || !downloadsDir.isDirectory) {
+            throw IllegalStateException("Could not create public Downloads directory")
         }
-        file.writeText(content, Charsets.UTF_8)
-        return file.absolutePath
+
+        val destination = File(downloadsDir, fileName)
+        val partial = File(downloadsDir, ".$fileName.part")
+        try {
+            val copied = partial.outputStream().buffered().use { output ->
+                val count = input.copyTo(output)
+                output.flush()
+                count
+            }
+            if (copied != expectedBytes || partial.length() != expectedBytes) {
+                throw IllegalStateException("Incomplete export: copied $copied of $expectedBytes bytes")
+            }
+            if (destination.exists() && !destination.delete()) {
+                throw IllegalStateException("Could not replace existing $destination")
+            }
+            if (!partial.renameTo(destination)) {
+                throw IllegalStateException("Could not publish $destination")
+            }
+        } catch (e: Exception) {
+            partial.delete()
+            throw e
+        }
+
+        // Ensure legacy Files/download apps are notified about the new file.
+        MediaScannerConnection.scanFile(
+            context,
+            arrayOf(destination.absolutePath),
+            arrayOf(mimeFor(fileName)),
+            null
+        )
+        return destination.absolutePath
+    }
+
+    private fun safeFileName(fileName: String): String {
+        val safe = fileName.replace('\\', '/').substringAfterLast('/').trim()
+        require(safe.isNotEmpty() && safe != "." && safe != "..") { "Invalid export file name" }
+        require(safe.none { it == '\u0000' || it == '/' || it == '\\' }) { "Invalid export file name" }
+        return safe
     }
 
     private fun mimeFor(fileName: String): String = when {
         fileName.endsWith(".json", ignoreCase = true) -> "application/json"
-        fileName.endsWith(".csv", ignoreCase = true)  -> "text/csv"
-        fileName.endsWith(".txt", ignoreCase = true)  -> "text/plain"
+        fileName.endsWith(".csv", ignoreCase = true) -> "text/csv"
+        fileName.endsWith(".txt", ignoreCase = true) -> "text/plain"
         else -> "application/octet-stream"
     }
 }

@@ -2,6 +2,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Patches the Tauri-generated Android project with:
 #   - Ongoing notification helper (unswipeable timeline notifications)
+#   - Public Downloads helper for JSON/CSV exports
 #   - Dark status bar matching the app theme (#0a0a0a)
 #   - Transparent status bar so content can extend behind it
 #   - Proper safe area inset handling
@@ -105,17 +106,15 @@ fi
 
 
 # ─── 1. Install OngoingNotificationHelper.kt ──────────────────────────────────
-# Find the Kotlin source directory (varies by project name)
-# Find the Kotlin source directory matching the package (e.g. com/.../app)
-KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -type d -name "app" | head -1)
-if [ -z "$KOTLIN_SRC" ]; then
-  KOTLIN_SRC=$(find "$ANDROID_DIR/app/src/main/java" -mindepth 2 -type d -maxdepth 4 | head -1)
-fi
-
-if [ -z "$KOTLIN_SRC" ]; then
-  echo "Error: Could not find Kotlin source directory"
+# Put helpers beside the generated MainActivity. Searching for an arbitrary
+# directory named "app" can select the wrong source folder and yield an APK
+# that builds successfully but does not contain the JNI helper classes.
+MAIN_ACTIVITY=$(find "$ANDROID_DIR/app/src/main/java" -type f -name "MainActivity.kt" | head -1)
+if [ -z "$MAIN_ACTIVITY" ]; then
+  echo "Error: Could not find generated MainActivity.kt"
   exit 1
 fi
+KOTLIN_SRC=$(dirname "$MAIN_ACTIVITY")
 
 # Rewrite the Kotlin `package` line to match the generated applicationId
 # (com.drugucopia.app for release, com.drugucopiadev.app for dev).
@@ -146,6 +145,16 @@ if [ -f "$SCRIPT_DIR/android-ongoing-notif/DownloadsHelper.kt" ]; then
   ok "Installed DownloadsHelper.kt"
 fi
 
+# Release builds run R8. These helpers have no Kotlin/Java callers because Rust
+# reaches them by class name through JNI, so R8 otherwise removes or renames
+# them. Tauri's generated release config includes **/*.pro files under app/.
+PROGUARD_FILE="$ANDROID_DIR/app/tauri-jni-helpers.pro"
+cat > "$PROGUARD_FILE" <<'EOF'
+-keep class **.DownloadsHelper { *; }
+-keep class **.OngoingNotificationHelper { *; }
+EOF
+ok "Installed R8 keep rules for JNI helper classes"
+
 # ─── 1b. Ensure INTERNET permission exists (critical for Firebase on Android)
 MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
 
@@ -163,6 +172,14 @@ if [ -f "$MANIFEST" ]; then
     info "Adding ACCESS_NETWORK_STATE permission"
     sed -i 's/<uses-permission android:name="android.permission.INTERNET" \/>/<uses-permission android:name="android.permission.INTERNET" \/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" \/>/' "$MANIFEST"
     ok "Added ACCESS_NETWORK_STATE permission"
+  fi
+
+  # MediaStore needs no storage permission on Android 10+, but the helper's
+  # direct public-Downloads path still supports Android 9 and earlier.
+  if ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$MANIFEST"; then
+    info "Adding legacy WRITE_EXTERNAL_STORAGE permission (Android 9 and earlier only)"
+    sed -i 's/<application/<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" \/>\n    <application/' "$MANIFEST"
+    ok "Added legacy storage permission"
   fi
 fi
 

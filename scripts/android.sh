@@ -311,7 +311,7 @@ fi
 
 # Always apply Android patches after init (ensures INTERNET permission for Firebase, dark theme, etc)
 if [ -f "$PROJECT_ROOT/scripts/patch-android.sh" ]; then
-  if [ "$NEW_INIT" = "1" ] || [ ! -f "$GEN_ANDROID_DIR/app/src/main/res/values/styles.xml" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  if [ "$NEW_INIT" = "1" ] || [ ! -f "$GEN_ANDROID_DIR/app/src/main/res/values/styles.xml" ] || ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$GEN_ANDROID_DIR/app/src/main/AndroidManifest.xml" 2>/dev/null || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     info "Applying Android patches (INTERNET permission, theme, etc)..."
     bash "$PROJECT_ROOT/scripts/patch-android.sh" || info "Patch script failed, continuing anyway"
   fi
@@ -324,29 +324,64 @@ fi
 install_kotlin_helpers() {
   local android_dir="$GEN_ANDROID_DIR"
   local src_dir="$PROJECT_ROOT/scripts/android-ongoing-notif"
-  [ -d "$android_dir/app/src/main/java" ] || return 0
-  [ -d "$src_dir" ] || return 0
+  [ -d "$android_dir/app/src/main/java" ] || die "Generated Android Java source directory is missing"
+  [ -d "$src_dir" ] || die "Android JNI helper source directory is missing"
 
-  local kotlin_src
-  kotlin_src=$(find "$android_dir/app/src/main/java" -type d -name "app" | head -1)
-  [ -n "$kotlin_src" ] || return 0
+  # Install beside MainActivity so the source package always matches the actual
+  # generated applicationId. A broad `find -name app` previously allowed a
+  # successful release build that omitted DownloadsHelper from the APK.
+  local main_activity kotlin_src
+  main_activity=$(find "$android_dir/app/src/main/java" -type f -name "MainActivity.kt" | head -1)
+  [ -n "$main_activity" ] || die "Could not locate generated MainActivity.kt"
+  kotlin_src=$(dirname "$main_activity")
 
   local rel pkg
   rel=$(printf '%s' "$kotlin_src" | sed 's|.*/java/||')
   pkg="${rel//\//.}"
+  [[ "$pkg" == *.* ]] || die "Could not derive Android package from $kotlin_src"
 
   local f dest
   for f in "$src_dir"/*.kt; do
     [ -f "$f" ] || continue
     dest="$kotlin_src/$(basename "$f")"
     cp "$f" "$dest"
-    if [[ "$pkg" == *.* ]]; then
-      sed -i "s/^package .*/package $pkg/" "$dest" || true
-    fi
+    sed -i "s/^package .*/package $pkg/" "$dest"
     ok "Installed $(basename "$f") → $dest (package $pkg)"
   done
+
+  [ -s "$kotlin_src/DownloadsHelper.kt" ] || die "DownloadsHelper.kt was not installed"
+  [ -s "$kotlin_src/OngoingNotificationHelper.kt" ] || die "OngoingNotificationHelper.kt was not installed"
+
+  # Release builds enable R8. JNI references are invisible to the shrinker,
+  # so preserve the helper class and method names explicitly. Tauri includes
+  # .pro files from the app tree in its generated release build type.
+  cat > "$android_dir/app/tauri-jni-helpers.pro" <<'EOF'
+-keep class **.DownloadsHelper { *; }
+-keep class **.OngoingNotificationHelper { *; }
+EOF
+  [ -s "$android_dir/app/tauri-jni-helpers.pro" ] || die "JNI helper R8 rules were not installed"
+  ok "Installed R8 keep rules for Android JNI helpers"
 }
 install_kotlin_helpers
+
+verify_release_apk_helpers() {
+  local apk dex_dump found=0
+  while IFS= read -r apk; do
+    [ -f "$apk" ] || continue
+    dex_dump=$(mktemp)
+    if unzip -p "$apk" 'classes*.dex' > "$dex_dump" 2>/dev/null && \
+       grep -a -q 'DownloadsHelper' "$dex_dump" && \
+       grep -a -q 'OngoingNotificationHelper' "$dex_dump"; then
+      ok "Verified JNI helpers are present in $(basename "$apk")"
+      found=1
+      rm -f "$dex_dump"
+      break
+    fi
+    rm -f "$dex_dump"
+  done < <(find "$GEN_ANDROID_DIR/app/build/outputs/apk" -type f -path '*/release/*.apk' 2>/dev/null)
+
+  [ "$found" = "1" ] || die "Release APK does not contain DownloadsHelper/OngoingNotificationHelper. Refusing to publish a broken export build."
+}
 
 # Verify Firebase env vars for release builds
 if [ "$ACTION" = "build" ]; then
@@ -412,5 +447,6 @@ case "$ACTION" in
       --apk \
       --target aarch64 \
       "${EXTRA_ARGS[@]}"
+    verify_release_apk_helpers
     ;;
 esac

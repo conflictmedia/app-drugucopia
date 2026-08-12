@@ -33,27 +33,20 @@ pub fn save_to_downloads(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "export.bin".to_string());
 
-    // Basic sanitisation: strip path separators — only the file name is allowed.
-    let safe_name = std::path::Path::new(&requested)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "export.bin".to_string());
+    // Strip Unix and Windows path components — only a file name is allowed.
+    let safe_name = safe_export_filename(&requested);
 
     #[cfg(target_os = "android")]
     {
-        match save_android(&app, &safe_name, &content) {
-            Ok(path) => Ok(path),
-            Err(e) => {
-                eprintln!("[downloads] android helper failed: {e}");
-                // Last resort: write somewhere the app can read. Better than a
-                // hard failure if MediaStore / JNI is unavailable.
-                write_to_first_writable(&app, &safe_name, &content).map_err(|fallback| {
-                    format!("android save failed ({e}); fallback also failed ({fallback})")
-                })
-            }
-        }
+        // Do not fall back to app-private storage here. A private write is not
+        // visible in the user's Downloads folder, and returning Ok would make
+        // the UI show a false "Saved to Downloads" confirmation. The caller
+        // can offer Android's share sheet when this public MediaStore write
+        // genuinely fails.
+        save_android(&app, &safe_name, &content).map_err(|e| {
+            eprintln!("[downloads] public Android Downloads write failed: {e}");
+            e
+        })
     }
 
     #[cfg(not(target_os = "android"))]
@@ -62,7 +55,19 @@ pub fn save_to_downloads(
     }
 }
 
+fn safe_export_filename(requested: &str) -> String {
+    let leaf = requested
+        .rsplit(['/', '\\'])
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .filter(|name| !name.chars().any(char::is_control));
+
+    leaf.unwrap_or("export.bin").to_string()
+}
+
 /// Try Tauri's path resolver, then $HOME/Downloads, then Documents / app data.
+#[cfg(not(target_os = "android"))]
 fn write_to_first_writable(
     app: &tauri::AppHandle,
     safe_name: &str,
@@ -109,6 +114,7 @@ fn write_to_first_writable(
     Err(last_err)
 }
 
+#[cfg(not(target_os = "android"))]
 fn env_downloads_dir() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("XDG_DOWNLOAD_DIR") {
         if !p.is_empty() {
@@ -148,15 +154,23 @@ fn save_android(app: &tauri::AppHandle, safe_name: &str, content: &str) -> Resul
         .map_err(|e| format!("no cache dir: {e}"))?;
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("create cache dir {}: {e}", cache_dir.display()))?;
-    let tmp_path = cache_dir.join(format!("export-{safe_name}"));
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = cache_dir.join(format!("export-{unique}-{safe_name}"));
     std::fs::write(&tmp_path, content).map_err(|e| format!("write temp export: {e}"))?;
     let tmp_path_str = tmp_path.to_string_lossy().into_owned();
 
     let (tx, rx) = mpsc::channel();
 
-    let webview_window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "no main webview window available".to_string())?;
+    let webview_window = match app.get_webview_window("main") {
+        Some(window) => window,
+        None => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err("no main webview window available".to_string());
+        }
+    };
 
     let file_name = safe_name.to_string();
     let content_owned = content.to_string();
@@ -178,21 +192,81 @@ fn save_android(app: &tauri::AppHandle, safe_name: &str, content: &str) -> Resul
                     Err(e) => return Err(format!("new_string tmp: {e:?}")),
                 };
 
-                // Try both applicationIds used by this project. The patch
-                // script rewrites the Kotlin package to match the build.
-                let class = match env.find_class("com/drugucopiadev/app/DownloadsHelper") {
-                    Ok(c) => c,
-                    Err(_) => {
-                        let _ = env.exception_clear();
-                        match env.find_class("com/drugucopia/app/DownloadsHelper") {
-                            Ok(c) => c,
+                // FindClass is unreliable from a native-attached Android
+                // thread because it can use the bootstrap class loader. Load
+                // the helper with the Activity's application class loader and
+                // derive the package from the running APK instead of hardcoding
+                // the dev/release applicationIds.
+                macro_rules! jni_call {
+                    ($expr:expr, $label:literal) => {
+                        match $expr {
+                            Ok(value) => value,
                             Err(e) => {
-                                let _ = env.exception_clear();
-                                return Err(format!("find_class DownloadsHelper: {e:?}"));
+                                if let Ok(true) = env.exception_check() {
+                                    let _ = env.exception_describe();
+                                    let _ = env.exception_clear();
+                                }
+                                return Err(format!("{}: {e:?}", $label));
                             }
                         }
-                    }
+                    };
+                }
+
+                let package_value = jni_call!(
+                    env.call_method(
+                        &activity,
+                        "getPackageName",
+                        "()Ljava/lang/String;",
+                        &[],
+                    ),
+                    "getPackageName"
+                );
+                let package_obj = match package_value.l() {
+                    Ok(value) if !value.is_null() => value,
+                    Ok(_) => return Err("getPackageName returned null".into()),
+                    Err(e) => return Err(format!("getPackageName result: {e:?}")),
                 };
+                let package_jstr: jni::objects::JString = package_obj.into();
+                let package_name: String = match env.get_string(&package_jstr) {
+                    Ok(value) => value.into(),
+                    Err(e) => return Err(format!("read package name: {e:?}")),
+                };
+
+                let loader_value = jni_call!(
+                    env.call_method(
+                        &activity,
+                        "getClassLoader",
+                        "()Ljava/lang/ClassLoader;",
+                        &[],
+                    ),
+                    "getClassLoader"
+                );
+                let class_loader = match loader_value.l() {
+                    Ok(value) if !value.is_null() => value,
+                    Ok(_) => return Err("getClassLoader returned null".into()),
+                    Err(e) => return Err(format!("getClassLoader result: {e:?}")),
+                };
+
+                let helper_name = format!("{package_name}.DownloadsHelper");
+                let j_helper_name = match env.new_string(&helper_name) {
+                    Ok(value) => value,
+                    Err(e) => return Err(format!("new_string helper class: {e:?}")),
+                };
+                let class_value = jni_call!(
+                    env.call_method(
+                        &class_loader,
+                        "loadClass",
+                        "(Ljava/lang/String;)Ljava/lang/Class;",
+                        &[JValue::Object(&j_helper_name)],
+                    ),
+                    "loadClass DownloadsHelper"
+                );
+                let class_obj = match class_value.l() {
+                    Ok(value) if !value.is_null() => value,
+                    Ok(_) => return Err(format!("loadClass returned null for {helper_name}")),
+                    Err(e) => return Err(format!("loadClass result for {helper_name}: {e:?}")),
+                };
+                let class: jni::objects::JClass = class_obj.into();
 
                 // Prefer the file-based helper (small JNI payload).
                 let file_call = env.call_static_method(
@@ -270,6 +344,7 @@ fn save_android(app: &tauri::AppHandle, safe_name: &str, content: &str) -> Resul
     });
 
     if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp_path);
         eprintln!("[downloads] with_webview failed: {e}");
         return Err(format!("with_webview failed: {e}"));
     }
@@ -279,7 +354,31 @@ fn save_android(app: &tauri::AppHandle, safe_name: &str, content: &str) -> Resul
             let _ = std::fs::remove_file(&tmp_path);
             inner
         }
+        // Leave the temp file on timeout: the queued Android callback may
+        // still consume it after this command returns. The OS will clear the
+        // app cache later.
         Err(mpsc::RecvTimeoutError::Timeout) => Err("JNI call timed out after 10000ms".into()),
-        Err(e) => Err(format!("channel recv failed: {e:?}")),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(format!("channel recv failed: {e:?}"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_export_filename;
+
+    #[test]
+    fn strips_unix_and_windows_path_components() {
+        assert_eq!(safe_export_filename("../../history.json"), "history.json");
+        assert_eq!(safe_export_filename(r"C:\temp\history.csv"), "history.csv");
+    }
+
+    #[test]
+    fn rejects_empty_or_special_names() {
+        assert_eq!(safe_export_filename(""), "export.bin");
+        assert_eq!(safe_export_filename(".."), "export.bin");
+        assert_eq!(safe_export_filename("bad\0name.json"), "export.bin");
     }
 }
