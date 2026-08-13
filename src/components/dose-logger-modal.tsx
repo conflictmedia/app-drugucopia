@@ -329,6 +329,10 @@ export function evaluateMathExpression(
   }
 }
 
+function normalizeQuery(str: string): string {
+  return str.toLowerCase().replace(/[-–—]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function parseQuickInput(
   input: string,
   substanceList: typeof substances
@@ -371,11 +375,11 @@ function parseQuickInput(
     let categories: string[] = []
 
     if (potentialSubstance) {
-      const lower = potentialSubstance.toLowerCase()
+      const lower = normalizeQuery(potentialSubstance)
       const exactMatch = substanceList.find(s =>
-        s.name.toLowerCase() === lower ||
-        s.commonNames?.some(cn => cn.toLowerCase() === lower) ||
-        s.aliases?.some(a => a.toLowerCase() === lower)
+        normalizeQuery(s.name) === lower ||
+        s.commonNames?.some(cn => normalizeQuery(cn) === lower) ||
+        s.aliases?.some(a => normalizeQuery(a) === lower)
       )
 
       if (exactMatch) {
@@ -388,11 +392,11 @@ function parseQuickInput(
             ? [raw.category]
             : []
       } else {
-        const originalInputLower = inputWithoutRoute.toLowerCase()
+        const originalInputLower = normalizeQuery(inputWithoutRoute)
         let candidates: { s: typeof substanceList[0]; score: number }[] = []
 
         for (const s of substanceList) {
-          const nameLower = s.name.toLowerCase()
+          const nameLower = normalizeQuery(s.name)
           let score = 0
           let matched = false
 
@@ -402,7 +406,7 @@ function parseQuickInput(
             score += lower.length
           }
           if (!matched && s.commonNames?.some(cn => {
-            const cnLower = cn.toLowerCase()
+            const cnLower = normalizeQuery(cn)
             if (cnLower.includes(lower) || lower.includes(cnLower)) {
               if (cnLower.includes(originalInputLower)) score += 100
               score += lower.length
@@ -411,7 +415,7 @@ function parseQuickInput(
             return false
           })) { matched = true }
           if (!matched && s.aliases?.some(a => {
-            const aLower = a.toLowerCase()
+            const aLower = normalizeQuery(a)
             if (aLower.includes(lower) || lower.includes(aLower)) {
               if (aLower.includes(originalInputLower)) score += 100
               score += lower.length
@@ -456,11 +460,11 @@ function parseQuickInput(
     }
   }
 
-  const fullInputLower = inputWithoutRoute.toLowerCase().trim()
+  const fullInputLower = normalizeQuery(inputWithoutRoute)
   const fullExactMatch = substanceList.find(s =>
-    s.name.toLowerCase() === fullInputLower ||
-    s.commonNames?.some(cn => cn.toLowerCase() === fullInputLower) ||
-    s.aliases?.some(a => a.toLowerCase() === fullInputLower)
+    normalizeQuery(s.name) === fullInputLower ||
+    s.commonNames?.some(cn => normalizeQuery(cn) === fullInputLower) ||
+    s.aliases?.some(a => normalizeQuery(a) === fullInputLower)
   )
   if (fullExactMatch) {
     const raw = fullExactMatch as any
@@ -495,9 +499,9 @@ function parseQuickInput(
 
   if (!amountStr) {
     const found = substanceList.find(s =>
-      s.name.toLowerCase() === inputWithoutRoute.toLowerCase() ||
-      s.commonNames?.some(cn => cn.toLowerCase() === inputWithoutRoute.toLowerCase()) ||
-      s.aliases?.some(a => a.toLowerCase() === inputWithoutRoute.toLowerCase())
+      normalizeQuery(s.name) === normalizeQuery(inputWithoutRoute) ||
+      s.commonNames?.some(cn => normalizeQuery(cn) === normalizeQuery(inputWithoutRoute)) ||
+      s.aliases?.some(a => normalizeQuery(a) === normalizeQuery(inputWithoutRoute))
     )
     if (found) {
       const raw = found as any
@@ -542,12 +546,12 @@ function parseQuickInput(
   let categories: string[] = []
 
   if (potentialSubstance) {
-    const lower = potentialSubstance.toLowerCase()
+    const lower = normalizeQuery(potentialSubstance)
 
     const exactMatch = substanceList.find(s =>
-      s.name.toLowerCase() === lower ||
-      s.commonNames?.some(cn => cn.toLowerCase() === lower) ||
-      s.aliases?.some(a => a.toLowerCase() === lower)
+      normalizeQuery(s.name) === lower ||
+      s.commonNames?.some(cn => normalizeQuery(cn) === lower) ||
+      s.aliases?.some(a => normalizeQuery(a) === lower)
     )
 
     if (exactMatch) {
@@ -560,11 +564,11 @@ function parseQuickInput(
           ? [raw.category]
           : []
     } else {
-      const originalInputLower = inputWithoutRoute.toLowerCase()
+      const originalInputLower = normalizeQuery(inputWithoutRoute)
       let candidates: { s: typeof substanceList[0]; score: number }[] = []
 
       for (const s of substanceList) {
-        const nameLower = s.name.toLowerCase()
+        const nameLower = normalizeQuery(s.name)
         let score = 0
         let matched = false
 
@@ -574,7 +578,7 @@ function parseQuickInput(
           score += lower.length
         }
         if (!matched && s.commonNames?.some(cn => {
-          const cnLower = cn.toLowerCase()
+          const cnLower = normalizeQuery(cn)
           if (cnLower.includes(lower) || lower.includes(cnLower)) {
             if (cnLower.includes(originalInputLower)) score += 100
             score += lower.length
@@ -583,7 +587,7 @@ function parseQuickInput(
           return false
         })) { matched = true }
         if (!matched && s.aliases?.some(a => {
-          const aLower = a.toLowerCase()
+          const aLower = normalizeQuery(a)
           if (aLower.includes(lower) || lower.includes(aLower)) {
             if (aLower.includes(originalInputLower)) score += 100
             score += lower.length
