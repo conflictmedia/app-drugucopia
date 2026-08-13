@@ -1054,6 +1054,12 @@ export function DoseLoggerModal({
     // Built-in or custom substance (merged in allSubstances).
     const builtin = allSubstances.find(s => s.id === substanceId)
     if (builtin) return builtin
+    // Fallback: look up by substance name in case the ID changed or didn't
+    // resolve (e.g. custom entry, Tauri Android webview environment).
+    if (substanceName) {
+      const byName = allSubstances.find(s => s.name === substanceName)
+      if (byName) return byName
+    }
     // User medication (namespaced `med-<uuid>` selector ID). We
     // resolve these to Substance-shaped objects via the medication
     // store so downstream duration / classification / interaction
@@ -1063,7 +1069,7 @@ export function DoseLoggerModal({
         .find(s => s.id === substanceId) as any
     }
     return undefined
-  }, [substanceId, allSubstances])
+  }, [substanceId, substanceName, allSubstances])
 
   const recentSubstances = useMemo(() => {
     // A2: include the last-dose amount/unit/route so the chip can
