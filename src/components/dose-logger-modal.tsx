@@ -788,6 +788,7 @@ export function DoseLoggerModal({
   }, [handleClose])
 
   const [loading, setLoading] = useState(false)
+  const submitLockRef = useRef(false)
   const doses = useDoseStore(useShallow(s => open ? { doses: s.doses } : { doses: EMPTY_DOSES })).doses
   const addDose = useDoseStore(s => s.addDose)
 
@@ -1256,7 +1257,10 @@ export function DoseLoggerModal({
   }
 
   const handleSubmit = async () => {
+    if (submitLockRef.current) return
+    submitLockRef.current = true
     if (!substanceName || !amount) {
+      submitLockRef.current = false
       toast({ title: 'Missing fields', description: 'Please select a substance and enter an amount', variant: 'destructive' })
       return
     }
@@ -1323,6 +1327,7 @@ export function DoseLoggerModal({
       toast({ title: 'Error', description: 'Failed to log dose', variant: 'destructive' })
     } finally {
       setLoading(false)
+      submitLockRef.current = false
     }
   }
 

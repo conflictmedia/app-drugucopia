@@ -27,6 +27,19 @@ const timestampMs = (dose: DoseLog) => Date.parse(dose.timestamp) || 0;
 const sortByTime = (doses: DoseLog[]) =>
   [...doses].sort((a, b) => timestampMs(b) - timestampMs(a));
 
+/** Deduplicate by id — first occurrence wins (newest-first order). */
+function dedupeDoses(doses: DoseLog[]): DoseLog[] {
+  const seen = new Set<string>();
+  const result: DoseLog[] = [];
+  for (const d of doses) {
+    if (!seen.has(d.id)) {
+      seen.add(d.id);
+      result.push(d);
+    }
+  }
+  return result;
+}
+
 /** Insert into the store's newest-first array without sorting the whole history. */
 function insertByTime(doses: DoseLog[], dose: DoseLog): DoseLog[] {
   const time = timestampMs(dose);
@@ -129,7 +142,7 @@ export const useDoseStore = create<DoseStore>()(
         const localDeleted = new Set<string>(
           JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"),
         );
-        const sorted = sortByTime(localDoses);
+        const sorted = sortByTime(dedupeDoses(localDoses));
         set({
           doses: sorted,
           activeDoses: computeActiveDoses(sorted),
@@ -146,7 +159,7 @@ export const useDoseStore = create<DoseStore>()(
       const onStorage = (e: StorageEvent) => {
         if (e.key === STORAGE_KEY && e.newValue !== null) {
           try {
-            const sorted = sortByTime(JSON.parse(e.newValue));
+            const sorted = sortByTime(dedupeDoses(JSON.parse(e.newValue)));
             set({ doses: sorted, activeDoses: computeActiveDoses(sorted) });
           } catch {}
         }
@@ -163,6 +176,10 @@ export const useDoseStore = create<DoseStore>()(
 
     addDose: (dose) => {
       set((state) => {
+        // Prevent duplicate IDs
+        if (state.doses.some((d) => d.id === dose.id)) {
+          return state;
+        }
         const updated = insertByTime(state.doses, dose);
         const updatedDeleted = new Set(state.deletedIds);
         updatedDeleted.delete(dose.id);
@@ -214,8 +231,19 @@ export const useDoseStore = create<DoseStore>()(
     // Coalesces into one state update + one debounced localStorage write.
     addDoses: (newDoses) => {
       set((state) => {
-        const updated = sortByTime([...newDoses, ...state.doses]);
-        const newIds = new Set(newDoses.map((d) => d.id));
+        const existingIds = new Set(state.doses.map((d) => d.id));
+        // Filter out duplicates: skip any with an ID already present in state
+        // or duplicate IDs within the incoming batch (first wins).
+        const filtered: DoseLog[] = [];
+        const incomingIds = new Set<string>();
+        for (const d of newDoses) {
+          if (!existingIds.has(d.id) && !incomingIds.has(d.id)) {
+            incomingIds.add(d.id);
+            filtered.push(d);
+          }
+        }
+        const updated = sortByTime([...filtered, ...state.doses]);
+        const newIds = new Set(filtered.map((d) => d.id));
         const updatedDeleted = new Set(state.deletedIds);
         newIds.forEach((id) => updatedDeleted.delete(id));
         persistDoses(updated);
@@ -260,7 +288,7 @@ export const useDoseStore = create<DoseStore>()(
     },
 
     setDosesFromSync: (doses, deletedIds) => {
-      const sorted = sortByTime(doses);
+      const sorted = sortByTime(dedupeDoses(doses));
       persistDoses(sorted);
       persistDeletedIds(deletedIds);
       set({
