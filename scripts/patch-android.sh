@@ -32,7 +32,7 @@ ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
 
 # --- ICON FIX: Sync launcher icons from public/ to Android mipmap ---
 resolve_icon_src() {
-  for cand in "public/logo-512.png" "public/logo.png" "src-tauri/icons/icon.png"; do
+  for cand in "public/logo-new.png" "public/logo-512.png" "public/logo.png" "src-tauri/icons/icon.png"; do
     if [ -f "$PROJECT_ROOT/$cand" ]; then
       echo "$PROJECT_ROOT/$cand"
       return 0
@@ -59,7 +59,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"])
     from PIL import Image
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-cands = [pr / "public/logo-512.png", pr / "public/logo.png", pr / "src-tauri/icons/icon.png"]
+cands = [pr / "public/logo-new.png", pr / "public/logo-512.png", pr / "public/logo.png", pr / "src-tauri/icons/icon.png"]
 src = next((c for c in cands if c.exists()), None)
 if not src:
     print("No source")

@@ -235,7 +235,7 @@ fi
 # does not exist, tauri icon only populates src-tauri/icons, not mipmap.
 # Fix: re-run icon generation AFTER init, so both desktop and Android get new icons.
 resolve_icon_src() {
-  for cand in "public/logo-512.png" "public/logo.png" "public/logo-192.png" "src-tauri/icons/icon.png"; do
+  for cand in "public/logo-new.png" "public/logo-512.png" "public/logo.png" "public/logo-192.png" "src-tauri/icons/icon.png"; do
     if [ -f "$PROJECT_ROOT/$cand" ]; then
       echo "$PROJECT_ROOT/$cand"
       return 0
@@ -275,7 +275,7 @@ except ImportError:
     from PIL import Image
 
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-candidates = [pr / "public/logo-512.png", pr / "public/logo.png", pr / "public/logo-192.png", pr / "src-tauri/icons/icon.png"]
+candidates = [pr / "public/logo-new.png", pr / "public/logo-512.png", pr / "public/logo.png", pr / "public/logo-192.png", pr / "src-tauri/icons/icon.png"]
 src = next((c for c in candidates if c.exists()), None)
 if not src:
     print("No icon source for manual sync")
