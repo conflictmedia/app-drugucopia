@@ -32,7 +32,17 @@ ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
 
 # --- ICON FIX: Sync launcher icons from public/ to Android mipmap ---
 resolve_icon_src() {
-  for cand in "public/logo-new.png" "public/logo-512.png" "public/logo.png" "src-tauri/icons/icon.png"; do
+  # Prefer the maskable, pre-padded variants for Android. These already have
+  # the logo confined to the inner ~66% safe zone, so the launcher's adaptive
+  # mask (circle / squircle / rounded square) will not clip the artwork.
+  # Full-bleed sources like logo-new.png are used LAST and only as a fallback.
+  for cand in \
+    "public/logo-512-maskable.png" \
+    "public/logo-192-maskable.png" \
+    "public/logo-new.png" \
+    "public/logo-512.png" \
+    "public/logo.png" \
+    "src-tauri/icons/icon.png"; do
     if [ -f "$PROJECT_ROOT/$cand" ]; then
       echo "$PROJECT_ROOT/$cand"
       return 0
@@ -59,13 +69,30 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"])
     from PIL import Image
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-cands = [pr / "public/logo-new.png", pr / "public/logo-512.png", pr / "public/logo.png", pr / "src-tauri/icons/icon.png"]
+# Prefer maskable (pre-padded) sources for Android so the launcher's adaptive
+# mask does not clip the artwork. Fall back to full-bleed sources only if needed.
+cands = [
+    pr / "public/logo-512-maskable.png",
+    pr / "public/logo-192-maskable.png",
+    pr / "public/logo-new.png",
+    pr / "public/logo-512.png",
+    pr / "public/logo.png",
+    pr / "src-tauri/icons/icon.png",
+]
 src = next((c for c in cands if c.exists()), None)
 if not src:
     print("No source")
     sys.exit(0)
 img = Image.open(src).convert("RGBA")
 gen = pr / "src-tauri/gen/android/app/src/main/res"
+
+# Android adaptive icon foreground is 108dp on a 108dp canvas, but only the
+# inner ~66% (the "safe zone") is guaranteed to survive the launcher's shape
+# mask. Even when the source image is already padded (maskable variants), we
+# paste into the safe zone explicitly so a full-bleed fallback source cannot
+# silently slip through and get clipped.
+SAFE_RATIO = 0.66
+
 cfgs = {
     "mipmap-mdpi": {"launcher": 48, "foreground": 108},
     "mipmap-hdpi": {"launcher": 72, "foreground": 162},
@@ -76,13 +103,52 @@ cfgs = {
 for folder, sz in cfgs.items():
     d = gen / folder
     d.mkdir(parents=True, exist_ok=True)
+
+    # Legacy square icons (pre-API 26): keep full-bleed, no mask applied.
     for name in ["ic_launcher.png", "ic_launcher_round.png"]:
         r = img.resize((sz["launcher"], sz["launcher"]), Image.LANCZOS)
         r.save(d / name, "PNG")
-    r = img.resize((sz["foreground"], sz["foreground"]), Image.LANCZOS)
-    r.save(d / "ic_launcher_foreground.png", "PNG")
-print("Manual sync done")
-# desktop icons
+
+    # Adaptive foreground: shrink logo to the safe zone, center on transparent
+    # canvas so the launcher mask (circle/squircle/etc.) cannot clip artwork.
+    fg_size = sz["foreground"]
+    canvas = Image.new("RGBA", (fg_size, fg_size), (0, 0, 0, 0))
+    inner = max(1, int(round(fg_size * SAFE_RATIO)))
+    resized = img.resize((inner, inner), Image.LANCZOS)
+    offset = ((fg_size - inner) // 2, (fg_size - inner) // 2)
+    canvas.paste(resized, offset, resized)
+    canvas.save(d / "ic_launcher_foreground.png", "PNG")
+
+# Background color used by the adaptive icon and the splash screen.
+# Matches the app theme (#0a0a0a) defined in styles.xml.
+values_dir = gen / "values"
+values_dir.mkdir(parents=True, exist_ok=True)
+colors_xml = values_dir / "colors.xml"
+colors_xml.write_text(
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<resources>\n'
+    '    <color name="ic_launcher_background">#0a0a0a</color>\n'
+    '    <color name="ic_launcher_foreground">#0a0a0a</color>\n'
+    '</resources>\n'
+)
+
+# Adaptive icon XML (API 26+): references our safe-zone foreground plus a flat
+# background color. Tauri's `tauri icon` normally generates these, but the
+# manual fallback path needs to emit them too or pre-API-26 launchers will use
+# the legacy bitmap and API 26+ launchers will render a blank adaptive icon.
+anydpi = gen / "mipmap-anydpi-v26"
+anydpi.mkdir(parents=True, exist_ok=True)
+for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+    (anydpi / name).write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <background android:drawable="@color/ic_launcher_background" />\n'
+        '    <foreground android:drawable="@mipmap/ic_launcher_foreground" />\n'
+        '</adaptive-icon>\n'
+    )
+
+print("Manual sync done (with adaptive-icon XML + colors.xml)")
+# desktop icons (these are NOT used by Android; safe to leave full-bleed)
 dd = pr / "src-tauri/icons"
 dd.mkdir(parents=True, exist_ok=True)
 for size, fname in [(32, "32x32.png"), (32, "32.png"), (16, "16.png"), (48, "48.png"), (64, "64x64.png"), (128, "128x128.png"), (256, "128x128@2x.png"), (256, "256.png"), (512, "icon.png")]:
@@ -212,11 +278,71 @@ EOF
   ok "Created styles.xml with dark status/nav bar"
 fi
 
-# ─── 4. Patch AndroidManifest.xml to use our theme ────────────────────────────
+# ─── 3a. Ensure colors.xml defines ic_launcher_background ─────────────────────
+# Tauri's `tauri icon` does not always emit this file, and the adaptive-icon
+# XML (mipmap-anydpi-v26/ic_launcher.xml) references it. Without it the build
+# fails with "resource color/ic_launcher_background not found".
+COLORS_FILE="$STYLES_DIR/colors.xml"
+if [ ! -f "$COLORS_FILE" ] || ! grep -q "ic_launcher_background" "$COLORS_FILE" 2>/dev/null; then
+  cat > "$COLORS_FILE" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0a0a0a</color>
+    <color name="ic_launcher_foreground">#0a0a0a</color>
+</resources>
+EOF
+  ok "Created colors.xml with ic_launcher_background (#0a0a0a)"
+fi
+
+# ─── 3b. Create mipmap-anydpi-v26/ic_launcher.xml for adaptive icons ─────────
+# These XMLs let API 26+ launchers composite our safe-zone foreground over a
+# flat background color, applying the device's chosen shape mask (circle,
+# squircle, rounded square, etc.) without clipping the logo.
+ANYDPI_DIR="$ANDROID_DIR/app/src/main/res/mipmap-anydpi-v26"
+mkdir -p "$ANYDPI_DIR"
+for ADAPTIVE_NAME in "ic_launcher.xml" "ic_launcher_round.xml"; do
+  ADAPTIVE_FILE="$ANYDPI_DIR/$ADAPTIVE_NAME"
+  if [ ! -f "$ADAPTIVE_FILE" ]; then
+    cat > "$ADAPTIVE_FILE" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
+EOF
+    ok "Created $ADAPTIVE_NAME (adaptive icon for API 26+)"
+  fi
+done
+
+# ─── 3c. Create themes.xml for Android 12+ SplashScreen ──────────────────────
+# On Android 12+ the system draws a splash screen using windowSplashScreen*
+# attributes. We pin the background to #0a0a0a (matches the rest of the app)
+# and reuse the safe-zone launcher foreground as the splash icon, so the
+# system's circular mask cannot clip it. The postSplashScreenTheme hands off
+# to Theme.Drugucopia once the WebView is ready.
+THEMES_FILE="$STYLES_DIR/themes.xml"
+if [ ! -f "$THEMES_FILE" ]; then
+  cat > "$THEMES_FILE" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Drugucopia.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0a0a0a</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.Drugucopia</item>
+    </style>
+</resources>
+EOF
+  ok "Created themes.xml with Theme.Drugucopia.Splash (Android 12+)"
+fi
+
+# ─── 4. Patch AndroidManifest.xml to use our splash theme ────────────────────
+# IMPORTANT: We point the application theme at Theme.Drugucopia.Splash so the
+# Android 12+ SplashScreen API uses our icon/background. The postSplashScreenTheme
+# attribute (declared in themes.xml) hands off to Theme.Drugucopia after launch.
 if [ -f "$MANIFEST" ]; then
-  if ! grep -q "Theme.Drugucopia" "$MANIFEST"; then
-    sed -i 's/android:theme="[^"]*"/android:theme="@style\/Theme.Drugucopia"/' "$MANIFEST" 2>/dev/null || true
-    ok "Applied Theme.Drugucopia to manifest"
+  if ! grep -q "Theme.Drugucopia.Splash" "$MANIFEST"; then
+    sed -i 's/android:theme="[^"]*"/android:theme="@style\/Theme.Drugucopia.Splash"/' "$MANIFEST" 2>/dev/null || true
+    ok "Applied Theme.Drugucopia.Splash to manifest"
   fi
 fi
 
@@ -228,6 +354,13 @@ if [ -f "$GRADLE_FILE" ]; then
     # Add the dependency
     sed -i '/dependencies {/a\    implementation("androidx.core:core:1.13.1")' "$GRADLE_FILE" 2>/dev/null || true
     ok "Added androidx.core dependency for NotificationCompat"
+  fi
+  # Android 12+ SplashScreen API requires the androidx.core:core-splashscreen
+  # artifact, which backports Theme.SplashScreen to API 21+. Without it the
+  # build fails with "resource style/Theme.SplashScreen not found".
+  if ! grep -q "core-splashscreen" "$GRADLE_FILE"; then
+    sed -i '/dependencies {/a\    implementation("androidx.core:core-splashscreen:1.0.1")' "$GRADLE_FILE" 2>/dev/null || true
+    ok "Added androidx.core:core-splashscreen for Android 12+ splash"
   fi
 fi
 
@@ -242,6 +375,8 @@ echo "    • DownloadsHelper.kt (native Export-to-Downloads for JSON/CSV)"
 echo "    • Dark status/nav bar theme"
 echo "    • Edge-to-edge display mode"
 echo "    • INTERNET + ACCESS_NETWORK_STATE permissions (Firebase)"
+echo "    • Adaptive launcher icon (safe-zone foreground + colors.xml + anydpi-v26 XML)"
+echo "    • Android 12+ SplashScreen theme (themes.xml + core-splashscreen dep)"
 echo ""
 echo "  Next step: npm run tauri:android:dev"
 echo ""

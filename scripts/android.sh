@@ -235,7 +235,18 @@ fi
 # does not exist, tauri icon only populates src-tauri/icons, not mipmap.
 # Fix: re-run icon generation AFTER init, so both desktop and Android get new icons.
 resolve_icon_src() {
-  for cand in "public/logo-new.png" "public/logo-512.png" "public/logo.png" "public/logo-192.png" "src-tauri/icons/icon.png"; do
+  # Prefer the maskable, pre-padded variants for Android. These already have
+  # the logo confined to the inner ~66% safe zone, so the launcher's adaptive
+  # mask (circle / squircle / rounded square) will not clip the artwork.
+  # Full-bleed sources like logo-new.png are used LAST and only as a fallback.
+  for cand in \
+    "public/logo-512-maskable.png" \
+    "public/logo-192-maskable.png" \
+    "public/logo-new.png" \
+    "public/logo-512.png" \
+    "public/logo.png" \
+    "public/logo-192.png" \
+    "src-tauri/icons/icon.png"; do
     if [ -f "$PROJECT_ROOT/$cand" ]; then
       echo "$PROJECT_ROOT/$cand"
       return 0
@@ -275,13 +286,31 @@ except ImportError:
     from PIL import Image
 
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-candidates = [pr / "public/logo-new.png", pr / "public/logo-512.png", pr / "public/logo.png", pr / "public/logo-192.png", pr / "src-tauri/icons/icon.png"]
+# Prefer maskable (pre-padded) sources for Android so the launcher's adaptive
+# mask does not clip the artwork. Fall back to full-bleed sources only if needed.
+candidates = [
+    pr / "public/logo-512-maskable.png",
+    pr / "public/logo-192-maskable.png",
+    pr / "public/logo-new.png",
+    pr / "public/logo-512.png",
+    pr / "public/logo.png",
+    pr / "public/logo-192.png",
+    pr / "src-tauri/icons/icon.png",
+]
 src = next((c for c in candidates if c.exists()), None)
 if not src:
     print("No icon source for manual sync")
     sys.exit(0)
 img = Image.open(src).convert("RGBA")
 gen = pr / "src-tauri/gen/android/app/src/main/res"
+
+# Android adaptive icon foreground is 108dp on a 108dp canvas, but only the
+# inner ~66% (the "safe zone") is guaranteed to survive the launcher's shape
+# mask. Even when the source image is already padded (maskable variants), we
+# paste into the safe zone explicitly so a full-bleed fallback source cannot
+# silently slip through and get clipped.
+SAFE_RATIO = 0.66
+
 cfgs = {
     "mipmap-mdpi": {"launcher": 48, "foreground": 108},
     "mipmap-hdpi": {"launcher": 72, "foreground": 162},
@@ -292,14 +321,52 @@ cfgs = {
 for folder, sz in cfgs.items():
     d = gen / folder
     d.mkdir(parents=True, exist_ok=True)
+
+    # Legacy square icons (pre-API 26): keep full-bleed, no mask applied.
     for name in ["ic_launcher.png", "ic_launcher_round.png"]:
         o = d / name
         r = img.resize((sz["launcher"], sz["launcher"]), Image.LANCZOS)
         r.save(o, "PNG")
-    fg = d / "ic_launcher_foreground.png"
-    r = img.resize((sz["foreground"], sz["foreground"]), Image.LANCZOS)
-    r.save(fg, "PNG")
-print("Manual mipmap sync done")
+
+    # Adaptive foreground: shrink logo to the safe zone, center on transparent
+    # canvas so the launcher mask (circle/squircle/etc.) cannot clip artwork.
+    fg_size = sz["foreground"]
+    canvas = Image.new("RGBA", (fg_size, fg_size), (0, 0, 0, 0))
+    inner = max(1, int(round(fg_size * SAFE_RATIO)))
+    resized = img.resize((inner, inner), Image.LANCZOS)
+    offset = ((fg_size - inner) // 2, (fg_size - inner) // 2)
+    canvas.paste(resized, offset, resized)
+    canvas.save(d / "ic_launcher_foreground.png", "PNG")
+
+# Background color used by the adaptive icon and the splash screen.
+# Matches the app theme (#0a0a0a) defined in styles.xml.
+values_dir = gen / "values"
+values_dir.mkdir(parents=True, exist_ok=True)
+colors_xml = values_dir / "colors.xml"
+colors_xml.write_text(
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<resources>\n'
+    '    <color name="ic_launcher_background">#0a0a0a</color>\n'
+    '    <color name="ic_launcher_foreground">#0a0a0a</color>\n'
+    '</resources>\n'
+)
+
+# Adaptive icon XML (API 26+): references our safe-zone foreground plus a flat
+# background color. Tauri's `tauri icon` normally generates these, but the
+# manual fallback path needs to emit them too or pre-API-26 launchers will use
+# the legacy bitmap and API 26+ launchers will render a blank adaptive icon.
+anydpi = gen / "mipmap-anydpi-v26"
+anydpi.mkdir(parents=True, exist_ok=True)
+for name in ("ic_launcher.xml", "ic_launcher_round.xml"):
+    (anydpi / name).write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+        '    <background android:drawable="@color/ic_launcher_background" />\n'
+        '    <foreground android:drawable="@mipmap/ic_launcher_foreground" />\n'
+        '</adaptive-icon>\n'
+    )
+
+print("Manual mipmap sync done (with adaptive-icon XML + colors.xml)")
 PYEOF
       ok "Manual sync complete"
     fi

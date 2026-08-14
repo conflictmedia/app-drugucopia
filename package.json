@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
-    "tauri:icon": "tauri icon public/logo.png",
+    "tauri:icon": "tauri icon public/logo-512-maskable.png",
     "tauri:dev": "tauri dev --config src-tauri/tauri.conf.dev.json",
     "tauri:build": "tauri build",
     "tauri:android:init": "tauri android init",
