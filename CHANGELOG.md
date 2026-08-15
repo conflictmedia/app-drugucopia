@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5] - 2026-08-14
+
+### Fixed
+- dose log searching
+- duplication issues
+- icon and splash screen issues
+
 ## [0.3.4] - 2026-08-11
 
 ### Fixed
