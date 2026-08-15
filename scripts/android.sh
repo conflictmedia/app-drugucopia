@@ -443,7 +443,6 @@ if [ ! -f "$DRAWABLE_DIR/ic_splash.png" ]; then
   if command -v python3 >/dev/null 2>&1; then
     PROJECT_ROOT="$PROJECT_ROOT" python3 - <<'PYEOF'
 import os, pathlib, sys
-from PIL import Image
 try:
     from PIL import Image
 except ImportError:
