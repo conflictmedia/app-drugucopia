@@ -289,9 +289,9 @@ pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
 # Prefer maskable (pre-padded) sources for Android so the launcher's adaptive
 # mask does not clip the artwork. Fall back to full-bleed sources only if needed.
 candidates = [
+    pr / "public/logo-new.png",
     pr / "public/logo-512-maskable.png",
     pr / "public/logo-192-maskable.png",
-    pr / "public/logo-new.png",
     pr / "public/logo-512.png",
     pr / "public/logo.png",
     pr / "public/logo-192.png",
@@ -342,6 +342,15 @@ for folder, sz in cfgs.items():
 # Matches the app theme (#0a0a0a) defined in styles.xml.
 values_dir = gen / "values"
 values_dir.mkdir(parents=True, exist_ok=True)
+
+# Remove Tauri-generated standalone color files that would duplicate entries
+# in our unified colors.xml (causes build error: "Duplicate resources").
+for tauri_color_file in ["ic_launcher_background.xml", "ic_launcher_foreground.xml"]:
+    p = values_dir / tauri_color_file
+    if p.exists():
+        p.unlink()
+        print(f"Removed Tauri-generated {tauri_color_file}")
+
 colors_xml = values_dir / "colors.xml"
 colors_xml.write_text(
     '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -376,10 +385,100 @@ else
 fi
 
 
-# Always apply Android patches after init (ensures INTERNET permission for Firebase, dark theme, etc)
+# ── Unconditional resource fixes (must run EVERY build, not just on new init) ──
+TAURI_VALUES_DIR="$GEN_ANDROID_DIR/app/src/main/res/values"
+mkdir -p "$TAURI_VALUES_DIR"
+
+# 1. Remove Tauri-generated standalone color XMLs that duplicate our colors.xml
+for TAURI_COLOR_XML in "ic_launcher_background.xml" "ic_launcher_foreground.xml"; do
+  [ -f "$TAURI_VALUES_DIR/$TAURI_COLOR_XML" ] && rm -f "$TAURI_VALUES_DIR/$TAURI_COLOR_XML" && info "Removed Tauri-generated $TAURI_COLOR_XML"
+done
+
+# 2. Ensure colors.xml exists with dark launcher background
+if [ ! -f "$TAURI_VALUES_DIR/colors.xml" ] || ! grep -q "ic_launcher_background" "$TAURI_VALUES_DIR/colors.xml" 2>/dev/null; then
+  cat > "$TAURI_VALUES_DIR/colors.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#0a0a0a</color>
+    <color name="ic_launcher_foreground">#0a0a0a</color>
+</resources>
+EOF
+  ok "Created colors.xml with ic_launcher_background (#0a0a0a)"
+fi
+
+# 3. Ensure themes.xml has splash theme (must overwrite Tauri default)
+cat > "$TAURI_VALUES_DIR/themes.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Drugucopia.Splash" parent="Theme.AppCompat.NoActionBar">
+        <item name="windowSplashScreenBackground">#0a0a0a</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="postSplashScreenTheme">@style/Theme.Drugucopia</item>
+    </style>
+</resources>
+EOF
+  ok "Created themes.xml with Theme.Drugucopia.Splash"
+
+# 4. Ensure styles.xml exists (base dark theme, must overwrite Tauri default)
+cat > "$TAURI_VALUES_DIR/styles.xml" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Drugucopia" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:statusBarColor">#0a0a0a</item>
+        <item name="android:navigationBarColor">#0a0a0a</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
+EOF
+  ok "Created styles.xml with dark status/nav bar"
+
+# 6. Ensure full-size splash drawable exists (so splash screen isn't a tiny 108px icon)
+DRAWABLE_DIR="$GEN_ANDROID_DIR/app/src/main/res/drawable"
+mkdir -p "$DRAWABLE_DIR"
+if [ ! -f "$DRAWABLE_DIR/ic_splash.png" ]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PROJECT_ROOT="$PROJECT_ROOT" python3 - <<'PYEOF'
+import os, pathlib, sys
+from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    import subprocess; subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"])
+    from PIL import Image
+pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
+img = Image.open("public/logo-512-maskable.png").convert("RGBA") if (pr / "public/logo-512-maskable.png").exists() else Image.open("public/logo-512.png").convert("RGBA")
+canvas = Image.new("RGBA", (512, 512), (10, 10, 10, 255))
+logo_size = 320
+resized = img.resize((logo_size, logo_size), Image.LANCZOS)
+offset = ((512 - logo_size)//2, (512 - logo_size)//2)
+canvas.paste(resized, offset, resized)
+canvas.save("src-tauri/gen/android/app/src/main/res/drawable/ic_splash.png", "PNG")
+PYEOF
+  fi
+  echo "Created splash drawable (512px)"
+fi
+
+# 5. Ensure adaptive icon XMLs exist (API 26+)
+ANYDPI_DIR="$GEN_ANDROID_DIR/app/src/main/res/mipmap-anydpi-v26"
+mkdir -p "$ANYDPI_DIR"
+for ADAPTIVE_NAME in "ic_launcher.xml" "ic_launcher_round.xml"; do
+  ADAPTIVE_FILE="$ANYDPI_DIR/$ADAPTIVE_NAME"
+  if [ ! -f "$ADAPTIVE_FILE" ]; then
+    cat > "$ADAPTIVE_FILE" <<'EOF'
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>
+EOF
+    ok "Created $ADAPTIVE_NAME (adaptive icon for API 26+)"
+  fi
+done
+
+# ── Conditional full patch (only on new init, CI, or missing pieces) ──
 if [ -f "$PROJECT_ROOT/scripts/patch-android.sh" ]; then
   if [ "$NEW_INIT" = "1" ] || [ ! -f "$GEN_ANDROID_DIR/app/src/main/res/values/styles.xml" ] || ! grep -q "android.permission.WRITE_EXTERNAL_STORAGE" "$GEN_ANDROID_DIR/app/src/main/AndroidManifest.xml" 2>/dev/null || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    info "Applying Android patches (INTERNET permission, theme, etc)..."
+    info "Applying full Android patches (permissions, status bar, etc)..."
     bash "$PROJECT_ROOT/scripts/patch-android.sh" || info "Patch script failed, continuing anyway"
   fi
 fi

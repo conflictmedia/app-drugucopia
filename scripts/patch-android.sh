@@ -42,6 +42,7 @@ resolve_icon_src() {
     "public/logo-new.png" \
     "public/logo-512.png" \
     "public/logo.png" \
+    "public/logo-192.png" \
     "src-tauri/icons/icon.png"; do
     if [ -f "$PROJECT_ROOT/$cand" ]; then
       echo "$PROJECT_ROOT/$cand"
@@ -72,11 +73,12 @@ pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
 # Prefer maskable (pre-padded) sources for Android so the launcher's adaptive
 # mask does not clip the artwork. Fall back to full-bleed sources only if needed.
 cands = [
+    pr / "public/logo-new.png",
     pr / "public/logo-512-maskable.png",
     pr / "public/logo-192-maskable.png",
-    pr / "public/logo-new.png",
     pr / "public/logo-512.png",
     pr / "public/logo.png",
+    pr / "public/logo-192.png",
     pr / "src-tauri/icons/icon.png",
 ]
 src = next((c for c in cands if c.exists()), None)
@@ -123,6 +125,15 @@ for folder, sz in cfgs.items():
 # Matches the app theme (#0a0a0a) defined in styles.xml.
 values_dir = gen / "values"
 values_dir.mkdir(parents=True, exist_ok=True)
+
+# Remove Tauri-generated standalone color files that would duplicate entries
+# in our unified colors.xml (causes build error: "Duplicate resources").
+for tauri_color_file in ["ic_launcher_background.xml", "ic_launcher_foreground.xml"]:
+    p = values_dir / tauri_color_file
+    if p.exists():
+        p.unlink()
+        print(f"Removed Tauri-generated {tauri_color_file}")
+
 colors_xml = values_dir / "colors.xml"
 colors_xml.write_text(
     '<?xml version="1.0" encoding="utf-8"?>\n'
@@ -279,9 +290,13 @@ EOF
 fi
 
 # ─── 3a. Ensure colors.xml defines ic_launcher_background ─────────────────────
-# Tauri's `tauri icon` does not always emit this file, and the adaptive-icon
-# XML (mipmap-anydpi-v26/ic_launcher.xml) references it. Without it the build
-# fails with "resource color/ic_launcher_background not found".
+# Tauri's `tauri icon` generates standalone ic_launcher_background.xml which
+# duplicates the entry in our colors.xml and causes a build failure. Remove
+# it (and any other Tauri-generated color XMLs) before writing our unified file.
+for TAURI_COLOR_FILE in "ic_launcher_background.xml" "ic_launcher_foreground.xml"; do
+  [ -f "$STYLES_DIR/$TAURI_COLOR_FILE" ] && rm -f "$STYLES_DIR/$TAURI_COLOR_FILE" && info "Removed Tauri-generated $TAURI_COLOR_FILE"
+done
+
 COLORS_FILE="$STYLES_DIR/colors.xml"
 if [ ! -f "$COLORS_FILE" ] || ! grep -q "ic_launcher_background" "$COLORS_FILE" 2>/dev/null; then
   cat > "$COLORS_FILE" <<'EOF'
@@ -325,9 +340,9 @@ if [ ! -f "$THEMES_FILE" ]; then
   cat > "$THEMES_FILE" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Drugucopia.Splash" parent="Theme.SplashScreen">
+    <style name="Theme.Drugucopia.Splash" parent="Theme.AppCompat.NoActionBar">
         <item name="windowSplashScreenBackground">#0a0a0a</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
         <item name="postSplashScreenTheme">@style/Theme.Drugucopia</item>
     </style>
 </resources>
