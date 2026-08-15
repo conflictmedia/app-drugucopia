@@ -446,8 +446,17 @@ import os, pathlib, sys
 try:
     from PIL import Image
 except ImportError:
-    import subprocess; subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"])
-    from PIL import Image
+    import subprocess, sys
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception:
+        print("Pillow not available, skipping splash drawable sync")
+        sys.exit(0)
+    try:
+        from PIL import Image
+    except ImportError:
+        print("Pillow install did not provide PIL, skipping splash drawable sync")
+        sys.exit(0)
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
 img = Image.open("public/logo-512-maskable.png").convert("RGBA") if (pr / "public/logo-512-maskable.png").exists() else Image.open("public/logo-512.png").convert("RGBA")
 canvas = Image.new("RGBA", (512, 512), (10, 10, 10, 255))
