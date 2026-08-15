@@ -281,8 +281,12 @@ import os, sys, pathlib
 try:
     from PIL import Image
 except ImportError:
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"])
+    import subprocess, sys
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except Exception:
+        print("Pillow not available, skipping Python icon sync (tauri icon already succeeded)")
+        sys.exit(0)
     from PIL import Image
 
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
