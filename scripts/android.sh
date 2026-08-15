@@ -620,6 +620,11 @@ case "$ACTION" in
         npx tauri icon "$ICON_SRC_PATH" 2>/dev/null || true
       fi
     fi
+    # tauri icon regenerates standalone ic_launcher_background.xml which duplicates
+    # colors.xml; remove it before build to prevent Gradle duplicate-resource error.
+    for TAURI_COLOR_XML in "ic_launcher_background.xml" "ic_launcher_foreground.xml"; do
+      [ -f "$TAURI_VALUES_DIR/$TAURI_COLOR_XML" ] && rm -f "$TAURI_VALUES_DIR/$TAURI_COLOR_XML" && info "Removed Tauri-generated $TAURI_COLOR_XML (pre-build)"
+    done
     npx tauri android build \
       --config "$CONFIG_FILE" \
       --apk \
