@@ -32,15 +32,14 @@ ok()    { echo -e "${GREEN}[patch]${NC} $*"; }
 
 # --- ICON FIX: Sync launcher icons from public/ to Android mipmap ---
 resolve_icon_src() {
-  # Prefer the maskable, pre-padded variants for Android. These already have
-  # the logo confined to the inner ~66% safe zone, so the launcher's adaptive
-  # mask (circle / squircle / rounded square) will not clip the artwork.
-  # Full-bleed sources like logo-new.png are used LAST and only as a fallback.
+  # Feed `tauri icon` the FULL-BLEED square (public/logo-512.png). It derives
+  # its own adaptive-icon padding, so handing it the pre-padded maskable
+  # variant made the artwork shrink twice and float in a black border.
+  # scripts/generate-icons.py keeps logo-512.png correctly framed.
   for cand in \
-    "public/logo-512-maskable.png" \
-    "public/logo-192-maskable.png" \
-    "public/logo-new.png" \
     "public/logo-512.png" \
+    "public/logo.png" \
+    "public/logo-new.png" \
     "public/logo.png" \
     "public/logo-192.png" \
     "src-tauri/icons/icon.png"; do
@@ -74,30 +73,38 @@ except ImportError:
         sys.exit(0)
     from PIL import Image
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-# Prefer maskable (pre-padded) sources for Android so the launcher's adaptive
-# mask does not clip the artwork. Fall back to full-bleed sources only if needed.
-cands = [
-    pr / "public/logo-new.png",
-    pr / "public/logo-512-maskable.png",
-    pr / "public/logo-192-maskable.png",
-    pr / "public/logo-512.png",
-    pr / "public/logo.png",
-    pr / "public/logo-192.png",
-    pr / "src-tauri/icons/icon.png",
-]
-src = next((c for c in cands if c.exists()), None)
-if not src:
-    print("No source")
-    sys.exit(0)
-img = Image.open(src).convert("RGBA")
-gen = pr / "src-tauri/gen/android/app/src/main/res"
 
-# Android adaptive icon foreground is 108dp on a 108dp canvas, but only the
-# inner ~66% (the "safe zone") is guaranteed to survive the launcher's shape
-# mask. Even when the source image is already padded (maskable variants), we
-# paste into the safe zone explicitly so a full-bleed fallback source cannot
-# silently slip through and get clipped.
-SAFE_RATIO = 0.66
+# Two DIFFERENT sources, because the two icon layers want different framing.
+#
+#   legacy  -> full-bleed square art  (public/logo-512.png)
+#   adaptive foreground -> art already inset to the 66% safe zone
+#                          (public/logo-512-maskable.png)
+#
+# These files are produced by scripts/generate-icons.py and are ALREADY framed
+# correctly. Historically this block re-applied SAFE_RATIO=0.66 on top of the
+# maskable source, which was itself only ~35% artwork - the two shrinks
+# compounded to ~23% and produced the "tiny logo, huge black border" bug.
+# Do NOT reintroduce a scale factor here; just resize.
+def _pick(*names):
+    for n in names:
+        p = pr / n
+        if p.exists():
+            return p
+    return None
+
+legacy_src = _pick("public/logo-512.png", "public/logo.png",
+                   "src-tauri/icons/icon.png", "public/logo-new.png")
+fg_src = _pick("public/logo-512-maskable.png", "public/logo-192-maskable.png",
+               "public/logo-512.png", "src-tauri/icons/icon.png")
+
+if not legacy_src or not fg_src:
+    print("No icon source for manual sync")
+    sys.exit(0)
+
+legacy_img = Image.open(legacy_src).convert("RGBA")
+fg_img = Image.open(fg_src).convert("RGBA")
+print(f"legacy icons from {legacy_src.name}, adaptive foreground from {fg_src.name}")
+gen = pr / "src-tauri/gen/android/app/src/main/res"
 
 cfgs = {
     "mipmap-mdpi": {"launcher": 48, "foreground": 108},
@@ -110,19 +117,17 @@ for folder, sz in cfgs.items():
     d = gen / folder
     d.mkdir(parents=True, exist_ok=True)
 
-    # Legacy square icons (pre-API 26): keep full-bleed, no mask applied.
+    # Legacy square/round icons (pre-API 26): full bleed, no inset.
     for name in ["ic_launcher.png", "ic_launcher_round.png"]:
-        r = img.resize((sz["launcher"], sz["launcher"]), Image.LANCZOS)
-        r.save(d / name, "PNG")
+        legacy_img.resize((sz["launcher"], sz["launcher"]), Image.LANCZOS).save(d / name, "PNG")
 
-    # Adaptive foreground: shrink logo to the safe zone, center on transparent
-    # canvas so the launcher mask (circle/squircle/etc.) cannot clip artwork.
+    # Adaptive foreground: the source is already inset to the safe zone, so we
+    # only resize it to the 108dp-equivalent canvas. Flattened onto the theme
+    # colour so the launcher mask can never reveal a transparent hole.
     fg_size = sz["foreground"]
-    canvas = Image.new("RGBA", (fg_size, fg_size), (0, 0, 0, 0))
-    inner = max(1, int(round(fg_size * SAFE_RATIO)))
-    resized = img.resize((inner, inner), Image.LANCZOS)
-    offset = ((fg_size - inner) // 2, (fg_size - inner) // 2)
-    canvas.paste(resized, offset, resized)
+    canvas = Image.new("RGBA", (fg_size, fg_size), (10, 10, 10, 255))
+    r = fg_img.resize((fg_size, fg_size), Image.LANCZOS)
+    canvas.alpha_composite(r)
     canvas.save(d / "ic_launcher_foreground.png", "PNG")
 
 # Background color used by the adaptive icon and the splash screen.
@@ -367,6 +372,7 @@ mkdir -p "$DRAWABLE_DIR"
 
 SPLASH_SRC=""
 for cand in \
+  "$PROJECT_ROOT/public/splash-icon-1024.png" \
   "$PROJECT_ROOT/public/logo-512-maskable.png" \
   "$PROJECT_ROOT/public/logo-512.png" \
   "$PROJECT_ROOT/public/logo-192-maskable.png" \
@@ -415,13 +421,29 @@ if not out_path.is_absolute():
     out_path = pr / out_path
 
 img = Image.open(src_path).convert("RGBA")
-canvas = Image.new("RGBA", (512, 512), (10, 10, 10, 255))
-logo_size = 320
-resized = img.resize((logo_size, logo_size), Image.LANCZOS)
-offset = ((512 - logo_size) // 2, (512 - logo_size) // 2)
-canvas.paste(resized, offset, resized)
+
+# The splash source (public/splash-icon-1024.png, written by
+# scripts/generate-icons.py) is ALREADY sized to the Android 12+ convention:
+# the artwork occupies ~62% of the canvas with theme-coloured padding around
+# it. This block used to shrink whatever it was handed to 320/512 = 0.625 on
+# top of that, and the previous source was itself only ~35% artwork - the two
+# shrinks compounded to ~22% and produced the tiny-logo-in-a-black-box splash.
+# So: resize to the target canvas ONLY when the source is pre-framed, and fall
+# back to insetting a raw logo if someone points this at un-framed art.
+SPLASH_CANVAS = 1024
+PREFRAMED = src_path.name in ("splash-icon-1024.png", "splash-1024.png")
+
+canvas = Image.new("RGBA", (SPLASH_CANVAS, SPLASH_CANVAS), (10, 10, 10, 255))
+if PREFRAMED:
+    canvas.alpha_composite(img.resize((SPLASH_CANVAS, SPLASH_CANVAS), Image.LANCZOS))
+else:
+    inner = int(SPLASH_CANVAS * 0.62)
+    s = min(inner / img.width, inner / img.height)
+    r = img.resize((max(1, int(img.width * s)), max(1, int(img.height * s))), Image.LANCZOS)
+    canvas.alpha_composite(r, ((SPLASH_CANVAS - r.width) // 2,
+                               (SPLASH_CANVAS - r.height) // 2))
 out_path.mkdir(parents=True, exist_ok=True)
-canvas.save(out_path / "ic_splash.png", "PNG")
+canvas.convert("RGB").save(out_path / "ic_splash.png", "PNG")
 print(f"Wrote {out_path / 'ic_splash.png'}")
 PYEOF
   fi

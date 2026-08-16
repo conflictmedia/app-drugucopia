@@ -34,7 +34,10 @@ export const metadata: Metadata = {
   authors: [{ name: "conflictmedia @ conflict@cocaine.ninja" }],
   icons: {
     icon: `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/logo.png`,
-    apple: `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/logo.png`,
+    // iOS ignores transparency and composites the home-screen icon on white,
+    // so point at the dedicated 180x180 opaque, full-bleed asset rather than
+    // reusing the 192px web icon.
+    apple: `${process.env.NEXT_PUBLIC_BASE_PATH || ''}/apple-touch-icon.png`,
   },
   // C1 — Web App Manifest so the app is installable to the home screen
   // and treated as a PWA. Combined with the offline service worker
