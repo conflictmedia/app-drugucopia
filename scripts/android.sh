@@ -437,11 +437,42 @@ EOF
   ok "Created styles.xml with dark status/nav bar"
 
 # 6. Ensure full-size splash drawable exists (so splash screen isn't a tiny 108px icon)
+# The drawable is referenced from themes.xml as @drawable/ic_splash; if it is missing
+# the Gradle `processUniversalReleaseResources` task fails with
+# "resource drawable/ic_splash not found" — the most common cause of CI breakage.
 DRAWABLE_DIR="$GEN_ANDROID_DIR/app/src/main/res/drawable"
 mkdir -p "$DRAWABLE_DIR"
+
+# Pick the best on-disk source for the splash artwork. The maskable variants are
+# already padded so the launcher's safe-zone mask cannot clip the artwork, which
+# also makes them ideal as the SplashScreen animated icon.
+SPLASH_SRC=""
+for cand in \
+  "$PROJECT_ROOT/public/logo-512-maskable.png" \
+  "$PROJECT_ROOT/public/logo-512.png" \
+  "$PROJECT_ROOT/public/logo-192-maskable.png" \
+  "$PROJECT_ROOT/public/logo-192.png" \
+  "$PROJECT_ROOT/public/logo-new.png" \
+  "$PROJECT_ROOT/public/logo.png" \
+  "$PROJECT_ROOT/src-tauri/icons/icon.png"; do
+  if [ -f "$cand" ]; then
+    SPLASH_SRC="$cand"
+    break
+  fi
+done
+
+if [ -z "$SPLASH_SRC" ]; then
+  die "No source PNG found for splash drawable — cannot satisfy @drawable/ic_splash reference in themes.xml"
+fi
+
 if [ ! -f "$DRAWABLE_DIR/ic_splash.png" ]; then
+  info "Creating splash drawable from $SPLASH_SRC..."
+  SPLASH_CREATED=0
+  # Preferred path: composite the logo onto a #0a0a0a canvas so the splash
+  # screen background matches the app theme. Pillow is available on most dev
+  # machines and on GitHub Actions runners, but it is NOT a hard requirement.
   if command -v python3 >/dev/null 2>&1; then
-    PROJECT_ROOT="$PROJECT_ROOT" python3 - <<'PYEOF'
+    PROJECT_ROOT="$PROJECT_ROOT" SPLASH_SRC="$SPLASH_SRC" DRAWABLE_DIR="$DRAWABLE_DIR" python3 - <<'PYEOF' && SPLASH_CREATED=1 || info "Python splash composite failed, falling back to cp"
 import os, pathlib, sys
 try:
     from PIL import Image
@@ -450,25 +481,55 @@ except ImportError:
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "Pillow"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except Exception:
-        print("Pillow not available, skipping splash drawable sync")
-        sys.exit(0)
+        raise SystemExit(1)
     try:
         from PIL import Image
     except ImportError:
-        print("Pillow install did not provide PIL, skipping splash drawable sync")
-        sys.exit(0)
+        raise SystemExit(1)
+
 pr = pathlib.Path(os.environ.get("PROJECT_ROOT", "."))
-img = Image.open("public/logo-512-maskable.png").convert("RGBA") if (pr / "public/logo-512-maskable.png").exists() else Image.open("public/logo-512.png").convert("RGBA")
+src = os.environ.get("SPLASH_SRC", "")
+out = os.environ.get("DRAWABLE_DIR", ".")
+# Resolve every path against PROJECT_ROOT so the script works regardless of cwd.
+src_path = pathlib.Path(src)
+if not src_path.is_absolute():
+    src_path = pr / src_path
+out_path = pathlib.Path(out)
+if not out_path.is_absolute():
+    out_path = pr / out_path
+
+img = Image.open(src_path).convert("RGBA")
 canvas = Image.new("RGBA", (512, 512), (10, 10, 10, 255))
 logo_size = 320
 resized = img.resize((logo_size, logo_size), Image.LANCZOS)
-offset = ((512 - logo_size)//2, (512 - logo_size)//2)
+offset = ((512 - logo_size) // 2, (512 - logo_size) // 2)
 canvas.paste(resized, offset, resized)
-canvas.save("src-tauri/gen/android/app/src/main/res/drawable/ic_splash.png", "PNG")
+out_path.mkdir(parents=True, exist_ok=True)
+canvas.save(out_path / "ic_splash.png", "PNG")
+print(f"Wrote {out_path / 'ic_splash.png'}")
 PYEOF
   fi
-  echo "Created splash drawable (512px)"
+  # Hard fallback: plain shell `cp`. The maskable source already has the logo
+  # centered inside the safe zone on a transparent background, which Android's
+  # SplashScreen API accepts as a valid animated-icon drawable. This path runs
+  # whenever Python is missing, Pillow can't be installed, or the composite
+  # raises any exception — so the build never breaks just because Pillow was
+  # unavailable.
+  if [ "$SPLASH_CREATED" != "1" ]; then
+    info "Falling back to plain cp for splash drawable"
+    cp "$SPLASH_SRC" "$DRAWABLE_DIR/ic_splash.png" || die "Failed to copy $SPLASH_SRC to $DRAWABLE_DIR/ic_splash.png"
+    SPLASH_CREATED=1
+  fi
 fi
+
+# Fail-fast: themes.xml unconditionally references @drawable/ic_splash, so if
+# the drawable is missing the Gradle resource-linking task will abort with a
+# confusing "resource drawable/ic_splash not found" error buried 4000 lines
+# deep in the build log. Surface the problem here instead.
+if [ ! -f "$DRAWABLE_DIR/ic_splash.png" ]; then
+  die "Splash drawable is still missing at $DRAWABLE_DIR/ic_splash.png — themes.xml references @drawable/ic_splash, the Android build cannot succeed"
+fi
+ok "Splash drawable present: $DRAWABLE_DIR/ic_splash.png"
 
 # 5. Ensure adaptive icon XMLs exist (API 26+)
 ANYDPI_DIR="$GEN_ANDROID_DIR/app/src/main/res/mipmap-anydpi-v26"
