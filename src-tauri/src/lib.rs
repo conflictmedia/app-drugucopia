@@ -1,7 +1,6 @@
 mod downloads;
 mod ongoing;
 
-use tauri::Manager;
 use tauri_plugin_store::StoreExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -26,10 +25,18 @@ pub fn run() {
             set_sync_credentials,
             clear_sync_credentials,
         ])
-        .setup(|app| {
+        .setup(|_app| {
+            // `tauri::Manager` is only needed in debug builds to open devtools.
+            // In release builds the entire block (including the trait import)
+            // is eliminated by `cfg(debug_assertions)`, which would otherwise
+            // trigger an "unused import" warning for `tauri::Manager` and an
+            // "unused variable" warning for the closure parameter. The
+            // underscore prefix on `_app` silences the release-build warning
+            // while still letting the debug build call methods on it.
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
+                use tauri::Manager;
+                let window = _app.get_webview_window("main").unwrap();
                 window.open_devtools();
             }
             Ok(())
