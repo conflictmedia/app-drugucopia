@@ -116,6 +116,12 @@ jobs:
 
       - name: Generate app icons (from public/logo-512.png - best quality)
         run: |
+          # Re-derive every icon from the master artwork first. This crops the
+          # wide lockup to the actual mark and frames each target exactly once,
+          # so nothing is left letterboxed inside a black border.
+          python3 -m pip install --quiet Pillow numpy || true
+          python3 scripts/generate-icons.py
+
           # Use 512px source - much better than 192px logo.png. Generates:
           # - src-tauri/icons/* (desktop)
           # - src-tauri/gen/android/.../mipmap-* (Android launcher)
@@ -127,6 +133,9 @@ jobs:
             echo "logo-512.png not found, falling back to logo.png"
             bun run tauri icon public/logo.png
           fi
+
+          # Guard against regressing to the tiny-logo-in-a-black-box bug.
+          python3 scripts/generate-icons.py --check
           echo "Listing generated icons:"
           ls -lh src-tauri/icons/ | head -20
           ls -lh src-tauri/gen/android/app/src/main/res/mipmap-hdpi/ || echo "No mipmap yet"
