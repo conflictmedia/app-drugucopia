@@ -44,9 +44,19 @@
    `--radius` is a project-level token (consumed by the shadcn-style
    `--radius-sm/md/lg/xl` aliases below). Each daisyUI theme also
    defines the daisyUI-native `--radius-selector/field/box` tokens.
+
+   `font-size: 13.6px` on :root scales the UI to ~85% via the rem unit.
+   Tailwind v4 + daisyUI 5 size everything (spacing, padding, font
+   sizes, radii, component dimensions) in rem, which resolves against
+   the root font-size — so dropping it from 16px → 13.6px shrinks the
+   whole UI proportionally. Unlike `zoom`, this does NOT shrink the
+   document layout box, so `100vw` / `100vh` / `position: fixed` /
+   portal-based overlays (tooltips, popovers, toasts, modals) still
+   anchor to the true viewport edges.
    ─────────────────────────────────────────────────────────────────── */
 :root {
   --radius: 0.75rem;
+  font-size: 13.6px; /* 0.85 × 16px — global 85% UI scale via rem */
 }
 
 /* ───────────────────────────────────────────────────────────────────
@@ -1196,18 +1206,25 @@
     cursor: grabbing;
   }
 
-  /* ─── Override for mobile tap targets ─── */
-  @media (max-width: 767px) {
-    /* content-visibility: auto - skip rendering offscreen heavy components */
-    .card-lift,
-    .chart-container,
-    .substance-grid > *,
-    .intensity-timeline-card,
-    .interaction-card,
-    .dose-log-entry {
-      content-visibility: auto;
-      contain-intrinsic-size: 200px;
-    }
+  /* ─── content-visibility: skip rendering offscreen heavy cards ───
+     Applied on ALL viewport sizes. Previously mobile-only, which left
+     desktop scroll janky when many chart cards were in the DOM at once.
+     `auto <length>` lets the browser remember the last rendered size and
+     falls back to <length> on first render — keeps scrollbar stable. */
+  .card-lift,
+  .intensity-timeline-card,
+  .interaction-card,
+  .dose-log-entry {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 200px;
+  }
+
+  /* Chart cards are taller — give the browser an accurate fallback so
+     scrollbar position doesn't jump as they scroll into view. */
+  .chart-container,
+  .substance-grid > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 600px;
   }
 
   .overscroll-none {
@@ -1217,6 +1234,18 @@
   /* ─── Phase 2: DaisyUI overrides — tightened motion + restraint ─── */
   .btn {
     @apply transition-all duration-150;
+  }
+
+  /* Force truncation of long selected text inside daisyUI selects. Native
+     <select> elements vary by browser in how they truncate the closed-state
+     display; this defensively guarantees text-overflow: ellipsis so long
+     option labels (e.g. "Australian Single Shot (30 mL)") never escape the
+     select's visible box, regardless of daisyUI's defaults. */
+  .select {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .btn-primary {
