@@ -325,6 +325,22 @@ const versionedCollectionSignature = <T extends VersionedSyncItem>(
 })
 
 /**
+ * Generic id→version signature for collections whose items carry an
+ * `updatedAt` (doses) or may lack one entirely (schedules created before
+ * updatedAt tracking). Used to detect whether the MERGED state contains
+ * records this device contributed that the remote snapshot lacks.
+ */
+const collectionSignature = <T extends { id: string; updatedAt?: string; timestamp?: string }>(
+  items: T[],
+  deleted: Set<string>,
+) => JSON.stringify({
+  items: items
+    .map((item) => `${item.id}:${item.updatedAt || item.timestamp || ''}`)
+    .sort(),
+  deleted: [...deleted].sort(),
+})
+
+/**
  * D2 — A pending sync conflict for a single dose.
  * The user must pick "keep local", "keep remote", or "keep both"
  * (keep both creates a new dose from the local version with a fresh ID).
@@ -577,6 +593,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const initialSyncDoneRef = useRef(false)
   const syncStatusRef = useRef<'idle' | 'connecting' | 'synced' | 'error'>('idle')
   const pushDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Set by connectToSync: drains a snapshot queued while a push was in flight. */
+  const pendingSnapDrainRef = useRef<(() => void) | null>(null)
   // Session-level guard: the "Secure Sync Active" toast should fire at most
   // once per page session, even if connectToSync re-runs (e.g. when isLoaded
   // / reminderIsLoaded flip after hydration and the auto-connect effect
@@ -796,6 +814,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       })
     } finally {
       isPushingRef.current = false
+      // BUGFIX (H4): a snapshot that arrived WHILE this push was in flight was
+      // queued by the onSnapshot handler but only drained inside
+      // processSnapshot's finally — which never ran, because the snapshot was
+      // queued during a PUSH, not during snapshot processing. It then sat
+      // stranded until some future snapshot event happened to arrive. Drain
+      // it here now that the push is done.
+      pendingSnapDrainRef.current?.()
     }
   }, [isLoaded, reminderIsLoaded, customSubstancesLoaded, medicationsLoaded])
 
@@ -1176,7 +1201,24 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
                 remoteDeletedMedications,
               )
 
+            // BUGFIX (H1): doses and schedules were NEVER considered for a
+            // consolidated push — only custom substances and medications
+            // were. If this device held local doses the remote lacked
+            // (e.g. logged offline then reconnected), the merge updated the
+            // local store but nothing was pushed: the UI showed "synced"
+            // while the room doc was still missing those doses, and other
+            // devices never received them until an unrelated local edit
+            // happened to trigger the auto-push.
+            const dosesNeedConsolidatedPush =
+              collectionSignature(merged, mergedDeleted) !==
+              collectionSignature(remoteDoses, remoteDeleted)
+            const schedulesNeedConsolidatedPush =
+              collectionSignature(mergedSchedules, mergedDeletedSchedules) !==
+              collectionSignature(remoteSchedules, remoteDeletedSchedules)
+
             const profileNeedsConsolidatedPush =
+              dosesNeedConsolidatedPush ||
+              schedulesNeedConsolidatedPush ||
               versionedCollectionSignature(mergedCustomSubstances, mergedDeletedCustomSubstances) !==
               versionedCollectionSignature(remoteCustomSubstances, remoteDeletedCustomSubstances) ||
               versionedCollectionSignature(mergedMedications, mergedDeletedMedications) !==
@@ -1227,6 +1269,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             console.debug('[sync] processing queued pending snapshot')
             processSnapshot(next)
           }
+        }
+      }
+
+      // Expose a drain hook so pushToSync's finally-block can process a
+      // snapshot that was queued while a PUSH (not a snapshot) was in flight.
+      pendingSnapDrainRef.current = () => {
+        if (pendingSnap && !isProcessingSnap && !isPushingRef.current) {
+          const next = pendingSnap
+          pendingSnap = null
+          console.debug('[sync] draining snapshot queued during push')
+          processSnapshot(next)
         }
       }
 
@@ -1285,8 +1338,22 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           // If we're currently pushing or processing a previous snapshot,
           // queue this one for later instead of dropping it.
           if (isPushingRef.current || isProcessingSnap) {
-            pendingSnap = docSnap
-            console.debug('[sync] snapshot queued (push/processing in progress)')
+            // Don't let an echo of our own push evict an already-queued
+            // snapshot: the echo carries no new information, while the
+            // queued one may hold a peer's data (last-wins queueing
+            // previously let a late echo overwrite and lose it).
+            let isNewEcho = false
+            try {
+              const h = (docSnap.data() as { encrypted?: { ciphertext?: string } } | undefined)
+                ?.encrypted?.ciphertext?.substring(0, 32)
+              isNewEcho = !!h && h === lastPushedHashRef.current
+            } catch { /* treat as non-echo */ }
+            if (!(pendingSnap && isNewEcho)) {
+              pendingSnap = docSnap
+              console.debug('[sync] snapshot queued (push/processing in progress)')
+            } else {
+              console.debug('[sync] echo snapshot dropped — keeping earlier queued snapshot')
+            }
             return
           }
           processSnapshot(docSnap)
@@ -1390,9 +1457,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   // D2 — Resolve a pending conflict.
   //   'local'  — overwrite the remote by writing local back with a fresh
   //              updatedAt (next push propagates it).
-  //   'remote' — discard the local version; the merged state already
-  //              kept the remote (since remote-wins is the default), so
-  //              we just need to remove the conflict from the queue.
+  //   'remote' — re-apply the remote version explicitly (the merge only
+  //              pre-kept it when the remote was newer; when local was
+  //              newer the store holds the local copy we must replace).
   //   'both'   — keep the remote (already in the store) AND create a
   //              new dose from the local version with a fresh ID.
   const resolveConflict = useCallback((conflictId: string, choice: 'local' | 'remote' | 'both') => {
@@ -1423,7 +1490,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         description: `Kept both versions of ${conflict.local.substanceName}.`,
       })
     } else {
-      // 'remote' — nothing to do, the merge already kept the remote.
+      // 'remote' — apply the remote version explicitly. The merge only kept
+      // the remote automatically when it was NEWER; in a both-edited conflict
+      // where the local version was newer, the store currently holds the
+      // LOCAL version. Previously this branch did nothing, so the user's
+      // "keep the synced version" choice was silently ignored and the next
+      // auto-push overwrote the remote with the rejected local version.
+      const now = new Date().toISOString()
+      useDoseStore.getState().updateDose({ ...conflict.remote, updatedAt: now })
       toast({
         title: 'Conflict resolved',
         description: `Kept the synced version of ${conflict.local.substanceName}.`,

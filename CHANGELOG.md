@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.7] - 2026-08-24
+
+### Fixed
+- NaN/neg/infinity dose saves
+- route normalization
+- ug mismatch
+- dead medication interaction warnings
+- haptics API usage
+- persistence flush/store races
+- consolidated push for doses/schedules
+- timeline notification settings/notify bugs
+- chart tooltip
+- alcohol fields
+- benzo calc
+- redose planner
+- favorites
+- CSV impor
+
 ## [0.3.7] - 2026-08-16
 
 ### Fixed

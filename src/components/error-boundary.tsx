@@ -36,22 +36,10 @@ export class ErrorBoundary extends Component<Props, State> {
 
     console.error(`[ErrorBoundary: ${this.props.name || 'Unknown'}]`, error, errorInfo);
 
-    if (typeof window !== 'undefined' && window.navigator?.sendBeacon) {
-      try {
-        const payload = JSON.stringify({
-          name: this.props.name,
-          message: error.message,
-          stack: error.stack,
-          componentStack: errorInfo.componentStack,
-          timestamp: new Date().toISOString(),
-          url: window.location.href,
-          userAgent: navigator.userAgent,
-        });
-        navigator.sendBeacon('/api/errors', payload);
-      } catch {
-        // Silently fail - error reporting should never break the app
-      }
-    }
+    // NOTE: a previous version beaconed error reports to '/api/errors', an
+    // endpoint that does not exist in this app (there is no src/app/api
+    // directory — the project is a static export). Every error produced a
+    // failed POST/404. Removed; errors are logged locally instead.
   }
 
   private handleRetry = () => {

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import {
   Card,
   CardContent,
@@ -26,16 +25,14 @@ export function TimelineNotificationSettings() {
   const {
     settings,
     updateSettings,
-    initialize,
   } = useTimelineNotificationStore()
 
-  const [isInitialized, setIsInitialized] = useState(false)
-
-  // Initialize store on mount
-  if (!isInitialized) {
-    initialize()
-    setIsInitialized(true)
-  }
+  // NOTE: no local initialize() call needed — ReminderProvider (which wraps
+  // the whole app) initializes this store on boot. The previous version
+  // called initialize() during render (setState-during-render) which we
+  // replaced with an effect that the react-hooks lint rule correctly
+  // flagged; removing it entirely is the clean option since the provider
+  // already guarantees initialization.
 
   const handleUpdateSetting = <K extends keyof typeof settings>(
     key: K,

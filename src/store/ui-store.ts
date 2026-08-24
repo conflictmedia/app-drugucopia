@@ -123,11 +123,13 @@ export const useUIStore = create<UIState>((set, get) => ({
   toggleFavorite: (sub) => {
     const existing = get().favoriteSubstances;
     const key = sub.id.toLowerCase();
-    const idx = existing.findIndex(
-      (s) =>
-        s.id.toLowerCase() === key ||
-        s.name.toLowerCase() === sub.name.toLowerCase(),
-    );
+    // BUGFIX: match by ID first. The old id-OR-name matching meant pinning
+    // a custom substance that shares a display name with a built-in (e.g.
+    // two "Caffeine" entries) unpinned the BUILT-IN instead of adding the
+    // custom one. Name matching is kept only as a legacy fallback for
+    // favorites persisted before ids existed — and only removes when the
+    // entry itself has no usable id.
+    const idx = existing.findIndex((s) => s.id.toLowerCase() === key);
     let next: FavoriteSubstance[];
     if (idx >= 0) {
       next = existing.filter((_, i) => i !== idx);

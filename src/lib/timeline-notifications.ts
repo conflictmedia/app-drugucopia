@@ -23,7 +23,6 @@ import {
   requestNotificationPermission,
   checkNotificationPermission,
 } from "./tauri-bridge";
-import { showBrowserNotification } from "./notification-utils";
 import type { DoseLog } from "@/types";
 import type { PhaseTimings } from "@/components/dose-timeline/dose-timeline-types";
 
@@ -370,7 +369,27 @@ async function cancelOngoingNotification(id: number): Promise<void> {
       // ignore
     }
   }
-  // Web: no way to programmatically close a notification by tag
+  // Web: close the notification via the SW (and directly via the
+  // registration as a fallback). Previously this was a no-op, so the last
+  // "Peak X% intensity" notice stayed in the shade forever after a dose
+  // ended, telling the user a dose was still active.
+  const tag = `drugucopia-timeline-${id}`;
+  try {
+    if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg?.active) {
+        reg.active.postMessage({
+          type: "CLOSE_NOTIFICATIONS_WITH_TAG",
+          tag,
+        });
+      }
+      // Also close any notifications this page context can see with the tag.
+      const notifications = await reg?.getNotifications({ tag });
+      notifications?.forEach((n) => n.close());
+    }
+  } catch {
+    // ignore
+  }
 }
 
 // ─── Core ─────────────────────────────────────────────────────────────────────
@@ -594,8 +613,6 @@ async function checkAndUpdate(force = false): Promise<void> {
         continue;
       }
 
-      lastPhase.set(key, dominantPhase);
-
       const intensity = Math.round(maxIntensity);
       const emoji = PHASE_EMOJI[dominantPhase];
       const phaseLabel = PHASE_DISPLAY[dominantPhase];
@@ -610,59 +627,31 @@ async function checkAndUpdate(force = false): Promise<void> {
 
       await sendOngoingNotification(id, title, body);
 
-      // Record notification sent (for cooldown tracking)
+      // BUGFIX (M7): only record the phase transition + cooldown AFTER a
+      // successful send. Previously lastPhase/recordNotificationSent ran
+      // before the await, so a failed send (permission denied, SW asleep)
+      // permanently consumed the phase change and it was never re-sent.
+      lastPhase.set(key, dominantPhase);
       recordNotificationSent(key);
 
-      // === CRITICAL: On TRUE force events (new dose, startup, manual force)
-      // we ALSO send using the *exact same visible path* that reminders use.
-      // This is what actually makes the popup / shade notification appear.
-      // NOT on foreground events - those only update the swipeable timeline notification.
+      // === On TRUE force events (new dose, startup, manual force) the
+      // web/Tauri visible notification was already sent by
+      // sendOngoingNotification above (sendGenericNotification with the
+      // stable tag). The extra duplicate paths that used to run here
+      // (a second sendGenericNotification with the same tag + a
+      // showBrowserNotification with a DIFFERENT "reminder-timeline-…"
+      // tag) caused 2–3 stacked notifications per force event on web and
+      // double alerts on Tauri — removed.
       const isTrueForceEvent = force && !isForegroundEvent;
-      if (isTrueForceEvent) {
-        // Use the same stable tag as sendOngoingNotification so the force
-        // send REPLACES the existing timeline notification for this
-        // substance rather than stacking a second one.
-        const forceTag = `drugucopia-timeline-${id}`;
+      if (isTrueForceEvent && isTauri()) {
+        // Refresh the Android shade notification (idempotent: same numeric id
+        // updates the existing entry rather than stacking).
         try {
-          const { sendGenericNotification } = await import("./tauri-bridge");
-          await sendGenericNotification(title, body, forceTag);
-          console.log(
-            "[timeline-notif] ✅ FORCE visible notification sent via sendGenericNotification",
-          );
-        } catch (e) {
-          console.warn("[timeline-notif] FORCE visible sendGeneric failed", e);
-        }
-
-        // Also send via the exact reminder helper (proven path)
-        try {
-          const fakeReminder = {
-            id: `timeline-${id}`,
-            substanceName: name,
-            status: "fired" as const,
-          } as any;
-          showBrowserNotification(
-            fakeReminder,
-            `${emoji} ${intensity}% intensity · ${phaseLabel}`,
-          );
-          console.log(
-            "[timeline-notif] ✅ FORCE sent via showBrowserNotification (reminder path)",
-          );
-        } catch (e) {
-          console.warn(
-            "[timeline-notif] showBrowserNotification fallback failed",
-            e,
-          );
-        }
-
-        // Also try the Android timeline one directly again on force (for status bar)
-        if (isTauri()) {
-          try {
-            const { invoke } = await import("@tauri-apps/api/core");
-            const oid = substanceId(key);
-            await invoke("show_ongoing_notification", { id: oid, title, body });
-            console.log("[timeline-notif] ✅ FORCE timeline notification sent");
-          } catch {}
-        }
+          const { invoke } = await import("@tauri-apps/api/core");
+          const oid = substanceId(key);
+          await invoke("show_ongoing_notification", { id: oid, title, body });
+          console.log("[timeline-notif] ✅ FORCE timeline notification sent");
+        } catch {}
       }
     }
 

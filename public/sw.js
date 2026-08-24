@@ -22,7 +22,7 @@
 
 // Bump this when changing the precache list or fetch strategy.
 // The activate handler drops any cache with a different version.
-const CACHE_VERSION = 'drugucopia-v8'
+const CACHE_VERSION = 'drugucopia-v9'
 const PRECACHE_NAME = `${CACHE_VERSION}-precache`
 const RUNTIME_NAME = `${CACHE_VERSION}-runtime`
 
@@ -38,14 +38,15 @@ const PRECACHE_URLS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
-      // NUKE: drop ALL caches on install, regardless of version. The
-      // previous versioning scheme wasn't aggressive enough — users were
-      // still seeing stale JS chunks from old SW versions. Wiping
-      // everything on every install guarantees a clean slate.
-      const keys = await caches.keys()
-      await Promise.all(keys.map((k) => caches.delete(k)))
+      // BUGFIX: do NOT delete caches during install. The PREVIOUSLY-ACTIVE
+      // service worker may still be serving from those caches while this new
+      // one waits (or the user closes the tab before activation) — wiping
+      // them here left the running old app with NO offline cache. Stale
+      // caches are now cleaned up in 'activate' (after this SW takes over),
+      // and stale JS chunks are already handled by the network-first chunk
+      // strategy below.
 
-      // Re-precache the critical app shell from the network (bypass HTTP cache).
+      // Precache the critical app shell from the network (bypass HTTP cache).
       const cache = await caches.open(PRECACHE_NAME)
       await Promise.all(
         PRECACHE_URLS.map(async (url) => {
@@ -72,14 +73,15 @@ self.addEventListener('activate', (event) => {
           .filter((k) => !k.startsWith(CACHE_VERSION))
           .map((k) => caches.delete(k)),
       )
-      // Force EVERY existing client (open tab) to reload immediately so
-      // they pick up the new application JS. Without this, an open tab
-      // keeps running the old JS even after the new SW takes over —
-      // which is the root cause of "I deployed a fix but it's still
-      // broken" reports.
+      // BUGFIX: don't force-navigate every open tab. client.navigate()
+      // aborts in-flight requests — including Firestore setDoc writes from
+      // the sync engine — surfacing spurious "Sync write failed" toasts and
+      // discarding unsaved form state mid-dose-entry. Instead, tell the
+      // clients an update activated; they pick up new JS on their next
+      // natural navigation (chunks are network-first anyway).
       const clients = await self.clients.matchAll({ type: 'window' })
       clients.forEach((client) => {
-        client.navigate(client.url).catch(() => { })
+        client.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION }).catch?.(() => { })
       })
       await self.clients.claim()
     })(),
@@ -106,8 +108,13 @@ self.addEventListener('fetch', (event) => {
           const fresh = await fetch(req)
           // Cache the latest navigation response so a later offline
           // visit gets the freshest app shell we've seen.
-          const cache = await caches.open(RUNTIME_NAME)
-          cache.put('/', fresh.clone()).catch(() => { })
+          // BUGFIX: only cache successful basic responses — a 404/500/
+          // opaque-redirect HTML page used to get stored under '/' and then
+          // served as the "app shell" on the next offline launch.
+          if (fresh && fresh.ok && fresh.type === 'basic') {
+            const cache = await caches.open(RUNTIME_NAME)
+            cache.put('/', fresh.clone()).catch(() => { })
+          }
           return fresh
         } catch {
           const cached = await caches.match('/')
@@ -201,15 +208,31 @@ self.addEventListener('fetch', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SHOW_NOTIFICATION') {
-    const { title, body, tag, icon, data } = event.data.payload
+    const { title, body, tag, icon, data, requireInteraction } = event.data.payload
     self.registration.showNotification(title, {
       body,
       tag,
       icon: icon || '/logo.png',
       data,
-      requireInteraction: true,
+      // Persist only when explicitly requested — a blanket
+      // requireInteraction left "Peak 87%" notices stuck in the shade
+      // forever after a dose ended (they are now closed programmatically
+      // via the CLOSE_TAG message).
+      requireInteraction: requireInteraction === true,
       vibrate: [200, 100, 200],
     })
+  }
+
+  // Close notifications by tag — lets the app clean up timeline
+  // notifications when a dose ends (registration.getNotifications is not
+  // reachable from the page for SW-shown notifications in all browsers,
+  // so the SW does it on the app's behalf).
+  if (event.data?.type === 'CLOSE_NOTIFICATIONS_WITH_TAG' && event.data.tag) {
+    event.waitUntil(
+      self.registration.getNotifications({ tag: event.data.tag }).then((notifications) => {
+        notifications.forEach((n) => n.close())
+      }).catch(() => { }),
+    )
   }
 
   // Allow the page to trigger an immediate SW update.

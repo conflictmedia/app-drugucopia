@@ -130,14 +130,23 @@ export function RedosePlanner({
 
   const plannedTimes = useMemo(() => {
     if (effectiveIntervalMinutes <= 0 || totalDoses <= 0) return []
+    // BUGFIX: plan relative to the dose's actual timestamp. Previously this
+    // always used Date.now(), so a dose back-dated to "2h ago" produced a
+    // first "Now" chip that was really 2h late.
+    const baseMs = timestamp ? new Date(timestamp).getTime() : Date.now()
+    if (!Number.isFinite(baseMs)) return []
     return Array.from({ length: totalDoses }, (_, i) =>
-      new Date(Date.now() + i * effectiveIntervalMinutes * 60_000)
+      new Date(baseMs + i * effectiveIntervalMinutes * 60_000)
     )
-  }, [effectiveIntervalMinutes, totalDoses])
+  }, [effectiveIntervalMinutes, totalDoses, timestamp])
 
   const initialDose: DoseLog | null = useMemo(() => {
     if (!logInitialDose || baseAmount <= 0) return null
-    const now = new Date().toISOString()
+    // BUGFIX: honor the user-set timestamp prop (previously always "now",
+    // silently re-dating back-dosed entries).
+    const ts = timestamp && Number.isFinite(new Date(timestamp).getTime())
+      ? new Date(timestamp).toISOString()
+      : new Date().toISOString()
     return {
       id: `dose_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       substanceId: substance.id,
@@ -146,14 +155,14 @@ export function RedosePlanner({
       amount: baseAmount,
       unit: baseUnit,
       route,
-      timestamp: now,
+      timestamp: ts,
       duration: duration ?? null,
       notes: notes || null,
       mood: mood || null,
       setting: setting || null,
       intensity: intensity ?? null,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: ts,
+      updatedAt: ts,
     }
   }, [
     logInitialDose,
@@ -167,6 +176,7 @@ export function RedosePlanner({
     mood,
     setting,
     intensity,
+    timestamp,
   ])
 
   const reminderStore = useReminderStore.getState()
@@ -223,7 +233,7 @@ export function RedosePlanner({
 
     toast({
       title: 'Redose plan created',
-      description: `${totalDoses} doses of ${baseAmount} ${baseUnit} ${substance.name} planned, ${timingLabel}. Next redose${plannedTimes.length > 1 ? 's' : ''}: ${plannedTimes.slice(0, 3).join(', ')}${plannedTimes.length > 3 ? '...' : ''}.`,
+      description: `${totalDoses} doses of ${baseAmount} ${baseUnit} ${substance.name} planned, ${timingLabel}. Next redose${plannedTimes.length > 1 ? 's' : ''}: ${plannedTimes.slice(0, 3).map((t) => format(t, 'h:mm a')).join(', ')}${plannedTimes.length > 3 ? '...' : ''}.`,
     })
 
     onPlanCreated?.()

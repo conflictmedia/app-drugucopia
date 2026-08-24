@@ -51,6 +51,30 @@ function parseDoseValue(raw: string, defaultUnit: string): number | null {
 }
 
 /**
+ * Normalize a unit string to a canonical token.
+ *
+ * CRITICAL: there are TWO visually identical micro-gram characters in the wild:
+ *   - 'µg'  U+00B5 MICRO SIGN       (substance data files, older logs)
+ *   - 'μg'  U+03BC GREEK SMALL MU   (the logger's unit dropdown)
+ * They must both normalize to the same canonical unit or every µg↔mg
+ * conversion silently fails and doses get misclassified (e.g. 1000 μg read
+ * as 1000 mg → "heavy"). Same for 'ug'/'mcg' spellings.
+ */
+function normalizeUnitString(u: string): string {
+  const lower = u.toLowerCase().trim()
+  const map: Record<string, string> = {
+    '\u00b5g': 'µg', // µ U+00B5
+    '\u03bcg': 'µg', // μ U+03BC (Greek mu)
+    'ug': 'µg', 'mcg': 'µg', 'microgram': 'µg', 'micrograms': 'µg',
+    'mg': 'mg', 'milligram': 'mg', 'milligrams': 'mg',
+    'g': 'g', 'gram': 'g', 'grams': 'g',
+    'ml': 'ml',
+    'l': 'l', 'liter': 'l', 'litre': 'l',
+  }
+  return map[lower] ?? lower
+}
+
+/**
  * Try to parse a dose string and return it in the given unit.
  * Handles µg → mg conversion when needed.
  */
@@ -64,16 +88,8 @@ function parseDoseToNumber(raw: string, targetUnit: string): number | null {
   // If no unit suffix found in raw string, assume it's already in targetUnit
   if (!sourceUnit) return value
 
-  // Normalize unit strings
-  const unitMap: Record<string, string> = {
-    'µg': 'µg', 'ug': 'µg', 'mcg': 'µg', 'microgram': 'µg',
-    'mg': 'mg', 'milligram': 'mg',
-    'g': 'g', 'gram': 'g',
-    'ml': 'ml', 'mL': 'ml',
-    'l': 'l', 'liter': 'l',
-  }
-  const normalizedSource = unitMap[sourceUnit] || sourceUnit
-  const normalizedTarget = unitMap[targetUnit] || targetUnit
+  const normalizedSource = normalizeUnitString(sourceUnit)
+  const normalizedTarget = normalizeUnitString(targetUnit)
 
   // Convert µg → mg when target is mg
   if (normalizedSource === 'µg' && normalizedTarget === 'mg') {

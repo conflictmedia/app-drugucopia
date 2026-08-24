@@ -30,16 +30,18 @@ const ROUTE_ALIASES: Record<string, string[]> = {
   insufflated: [
     "insufflated",
     "insufflation",
+    "insufflating",
+    "insuff",
     "nasal",
     "snorted",
     "snort",
     "intranasal",
     "in",
-    "insufflating",
   ],
   inhaled: [
     "inhaled",
     "inhalation",
+    "inhale",
     "inhal",
     "smoked",
     "smoking",
@@ -64,10 +66,24 @@ const ROUTE_ALIASES: Record<string, string[]> = {
   transdermal: ["transdermal", "patch", "topical", "skin"],
 };
 
+const SHORT_ALIAS_MAX_LEN = 2; // "in", "iv", "im", "po", "sl", "sc", "pr" — exact matches only
+
 export function normaliseRoute(route: string): string | null {
   const lower = route.toLowerCase().trim();
+
+  // Pass 1: exact matches only. This guarantees canonical routes ("intravenous",
+  // "inhaled", …) resolve to their own group instead of being captured by the
+  // 2-char "in" alias of the insufflated group via prefix matching.
   for (const [canonical, aliases] of Object.entries(ROUTE_ALIASES)) {
-    if (aliases.some((a) => lower === a || lower.startsWith(a)))
+    if (aliases.includes(lower)) return canonical;
+  }
+
+  // Pass 2: prefix matches, but only for aliases of 3+ characters. Short
+  // aliases like "in" must never prefix-match "intravenous"/"inhaled"/…
+  for (const [canonical, aliases] of Object.entries(ROUTE_ALIASES)) {
+    if (
+      aliases.some((a) => a.length > SHORT_ALIAS_MAX_LEN && lower.startsWith(a))
+    )
       return canonical;
   }
   return null;

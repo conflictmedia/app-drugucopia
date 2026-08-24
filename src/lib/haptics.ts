@@ -36,17 +36,22 @@ async function initHaptics(): Promise<void> {
         return
       }
 
-      // Dynamic import of Tauri haptics plugin
-      const { haptic } = await import('@tauri-apps/plugin-haptics')
+      // Dynamic import of Tauri haptics plugin.
+      // NOTE: the plugin's real API is impactFeedback / notificationFeedback /
+      // selectionFeedback (plus vibrate). The previously-used `haptic` export
+      // does not exist, so every call threw `TypeError: Cannot read properties
+      // of undefined` and haptics silently never worked on Android.
+      const { impactFeedback, notificationFeedback, selectionFeedback } =
+        await import('@tauri-apps/plugin-haptics')
 
       hapticsModule = {
-        light: () => haptic.impact({ style: 'light' }),
-        medium: () => haptic.impact({ style: 'medium' }),
-        heavy: () => haptic.impact({ style: 'heavy' }),
-        selection: () => haptic.selectionChanged(),
-        success: () => haptic.notification({ type: 'success' }),
-        warning: () => haptic.notification({ type: 'warning' }),
-        error: () => haptic.notification({ type: 'error' }),
+        light: () => impactFeedback('light').then(() => undefined),
+        medium: () => impactFeedback('medium').then(() => undefined),
+        heavy: () => impactFeedback('heavy').then(() => undefined),
+        selection: () => selectionFeedback().then(() => undefined),
+        success: () => notificationFeedback('success').then(() => undefined),
+        warning: () => notificationFeedback('warning').then(() => undefined),
+        error: () => notificationFeedback('error').then(() => undefined),
         isAvailable: async () => true,
       }
 

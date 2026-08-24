@@ -74,4 +74,8 @@ export interface ActiveReminder {
   snoozedUntil?: string
   /** Last date used for dosesRemindedToday tracking (YYYY-MM-DD) */
   remindedDate?: string
+  /** ISO timestamp when this reminder actually fired (set on transition to
+   * 'fired'). Cleanup compares against THIS, not `firesAt`, so a reminder
+   * snoozed past firesAt+2h is not silently removed before being seen. */
+  firedAt?: string
 }

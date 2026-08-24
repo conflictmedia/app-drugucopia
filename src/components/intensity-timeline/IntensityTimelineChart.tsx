@@ -350,8 +350,13 @@ function GroupCard({
   const todayCumulative = useMemo(() => {
     const allDoses = group.routes.flatMap(rg => rg.doses)
     if (allDoses.length <= 1) return null
-    const todayStr = new Date(now).toISOString().slice(0, 10)
-    const todayDoses = allDoses.filter(d => d.timestamp.slice(0, 10) === todayStr)
+    // BUGFIX: compare LOCAL calendar days (both sides). Slicing the UTC ISO
+    // strings bucketed doses by the UTC day, so for non-UTC users doses
+    // taken near local midnight fell out of (or leaked into) "today".
+    const localDay = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const todayStr = localDay(new Date(now))
+    const todayDoses = allDoses.filter(d => localDay(new Date(d.timestamp)) === todayStr)
     if (todayDoses.length === 0) return null
     // Sum amounts only when units are uniform (can't add mg + drops)
     const firstUnit = todayDoses[0].unit
@@ -1146,16 +1151,20 @@ interface ChartTooltipProps {
   series: DoseSeries[]
   windowStartMs: number
   nowTs: number
+  /** Injected by Recharts when used as a Tooltip `content` element. */
+  active?: boolean
+  payload?: Array<{ dataKey?: string | number; value?: number; payload?: { t?: number } }>
 }
 
-function ChartTooltip({ series, windowStartMs, nowTs }: ChartTooltipProps) {
-  const [activePayload, setActivePayload] = useState<Array<{ dataKey: string; value: number; payload: ChartDataPoint }>>([])
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null)
-
-  if (!activePayload.length) return null
+function ChartTooltip({ series, nowTs, active, payload }: ChartTooltipProps) {
+  // BUGFIX: this component used to keep `activePayload` in local state that
+  // was never set from anywhere (Recharts injects active/payload as props,
+  // it does not call setters) — so the tooltip, and the keyboard/hover-snap
+  // machinery feeding it, rendered nothing, ever. Read the injected props.
+  if (!active || !payload?.length) return null
 
   // Find the hovered time from the first active payload's payload
-  const t = activePayload[0]?.payload?.t ?? nowTs
+  const t = payload[0]?.payload?.t ?? nowTs
   const timeStr = format(new Date(t), 'h:mm:ss a')
 
   // Collect active doses at this timestamp

@@ -60,16 +60,53 @@ function insertByTime(doses: DoseLog[], dose: DoseLog): DoseLog[] {
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 const PERSIST_DEBOUNCE_MS = 300;
 
+/** Most recent doses snapshot — used by flushDoses() on app hide/close. */
+let latestDoses: DoseLog[] | null = null;
+
+function writeDosesToStorage(doses: DoseLog[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(doses));
+  } catch (e) {
+    console.error("Failed to persist doses to localStorage", e);
+  }
+}
+
 function persistDoses(doses: DoseLog[]) {
+  latestDoses = doses;
   if (persistTimer) clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(doses));
-    } catch (e) {
-      console.error("Failed to persist doses to localStorage", e);
-    }
+    writeDosesToStorage(latestDoses ?? []);
     persistTimer = null;
   }, PERSIST_DEBOUNCE_MS);
+}
+
+/**
+ * Flush any pending debounced write to localStorage immediately.
+ *
+ * Without this, a dose logged right before the app is backgrounded/killed
+ * (mobile swipe-away, OS reclaiming the WebView, tab close) lived only in
+ * memory — the 300 ms debounce timer never fired and the dose was silently
+ * lost on next launch. The same applied to clearAllDoses (deleted doses
+ * resurrected) and setDosesFromSync (completed merges lost).
+ */
+export function flushDosePersistence() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (latestDoses !== null) {
+    writeDosesToStorage(latestDoses);
+  }
+}
+
+// Register flush hooks once (client-side only). `pagehide` covers normal
+// navigation/close on modern browsers; `visibilitychange` → hidden covers
+// mobile backgrounding where pagehide may not fire before the process dies.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushDosePersistence);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushDosePersistence();
+  });
 }
 
 function persistDeletedIds(deletedIds: Set<string>) {
@@ -84,7 +121,13 @@ function persistDeletedIds(deletedIds: Set<string>) {
 // "Active" = doses within their declared duration window (plus a safety
 // buffer). This lets the Active Session tab subscribe to a tiny array instead
 // of the full history, drastically reducing computeGroups work.
-const ACTIVE_DOSE_BUFFER_MINS = 60; // keep doses up to 1h after their declared end
+//
+// NOTE: the active window below is intentionally generous: it keeps a dose
+// listed for up to max(2× its total duration, 24 h) after ingestion, plus a
+// 60 min buffer. Short-acting substances (e.g. nitrous, ~15 min) therefore
+// remain in the Active Session list for ~24 h by design — a conservative
+// safety margin, NOT "declared end + 1 h" as an earlier comment claimed.
+const ACTIVE_DOSE_BUFFER_MINS = 60;
 
 function parseDurationToMinutes(total?: string): number {
   if (!total) return 0;
@@ -122,6 +165,12 @@ function computeActiveDoses(doses: DoseLog[]): DoseLog[] {
   return result;
 }
 
+// Tracks the currently-registered cross-tab storage listener.
+// Previously the `isLoaded` guard early-returned BEFORE registering the
+// listener, so after a cleanup + re-mount (React StrictMode double-mount in
+// dev) the listener was gone forever and cross-tab sync silently died.
+let activeStorageHandler: ((e: StorageEvent) => void) | null = null;
+
 export const useDoses = () => useDoseStore((state) => state.doses);
 export const useDeletedIds = () => useDoseStore((state) => state.deletedIds);
 export const useDoseStore = create<DoseStore>()(
@@ -132,26 +181,26 @@ export const useDoseStore = create<DoseStore>()(
     isLoaded: false,
 
     initialize: () => {
-      // Guard: only run once
-      if (get().isLoaded) return;
-
-      try {
-        const localDoses: DoseLog[] = JSON.parse(
-          localStorage.getItem(STORAGE_KEY) || "[]",
-        );
-        const localDeleted = new Set<string>(
-          JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"),
-        );
-        const sorted = sortByTime(dedupeDoses(localDoses));
-        set({
-          doses: sorted,
-          activeDoses: computeActiveDoses(sorted),
-          deletedIds: localDeleted,
-          isLoaded: true,
-        });
-      } catch (e) {
-        console.error("Failed to parse local storage", e);
-        set({ isLoaded: true });
+      // Guard: load from localStorage only once
+      if (!get().isLoaded) {
+        try {
+          const localDoses: DoseLog[] = JSON.parse(
+            localStorage.getItem(STORAGE_KEY) || "[]",
+          );
+          const localDeleted = new Set<string>(
+            JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"),
+          );
+          const sorted = sortByTime(dedupeDoses(localDoses));
+          set({
+            doses: sorted,
+            activeDoses: computeActiveDoses(sorted),
+            deletedIds: localDeleted,
+            isLoaded: true,
+          });
+        } catch (e) {
+          console.error("Failed to parse local storage", e);
+          set({ isLoaded: true });
+        }
       }
 
       // Single, stable storage listener — kept for cross-tab sync.
@@ -170,8 +219,16 @@ export const useDoseStore = create<DoseStore>()(
         }
       };
 
-      window.addEventListener("storage", onStorage);
-      return () => window.removeEventListener("storage", onStorage);
+      if (!activeStorageHandler) {
+        activeStorageHandler = onStorage;
+        window.addEventListener("storage", onStorage);
+      }
+      return () => {
+        if (activeStorageHandler) {
+          window.removeEventListener("storage", activeStorageHandler);
+          activeStorageHandler = null;
+        }
+      };
     },
 
     addDose: (dose) => {

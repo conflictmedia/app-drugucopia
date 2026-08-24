@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Wine, Scale, Beaker, Info, ArrowRightLeft } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -50,36 +50,58 @@ export function AlcoholCalculatorFields({
   const beveragePreset = useMemo(() => getBeveragePreset(beverageId), [beverageId])
   const shotSize = useMemo(() => getShotSize(shotSizeId), [shotSizeId])
 
+  // Standard serving volumes (mL) used when the unit toggle is "drinks".
+  // Previously "drinks" mode computed with the SHOT volume for every
+  // beverage, so "1 drink of beer" came out as 44 mL × 5% ≈ 1.75 g instead
+  // of a real 12 oz can ≈ 14 g — an ~8× underestimate.
+  const DRINK_SERVING_ML: Record<string, number> = {
+    beer: 355,          // 12 fl oz can/bottle
+    'beer-strong': 355,
+    cider: 355,
+    wine: 150,          // 5 fl oz glass
+    'wine-fortified': 90, // 3 fl oz glass
+    sake: 180,          // 1 go
+    // spirits-* fall back to the selected shot size
+  }
+
+  const effectiveVolumeMl = useMemo(() => {
+    if (drinkUnit === 'drinks') {
+      return DRINK_SERVING_ML[beverageId] ?? shotSize?.volumeMl ?? 44.36
+    }
+    return shotSize?.volumeMl ?? 44.36
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drinkUnit, beverageId, shotSizeId, shotSize])
+
   // Calculate grams of ethanol
   const conversionResult = useMemo(() => {
-    const volumeMl = shotSize?.volumeMl ?? 44.36
     const abv = beveragePreset?.abv ?? 40
-    return shotsToGrams({ shots: drinkCount, shotVolumeMl: volumeMl, abv })
-  }, [drinkCount, shotSize, beveragePreset])
+    return shotsToGrams({ shots: drinkCount, shotVolumeMl: effectiveVolumeMl, abv })
+  }, [drinkCount, effectiveVolumeMl, beveragePreset])
 
-  // Auto-convert to grams on mount and when drinkCount changes (from parent)
-  useEffect(() => {
-    if (conversionResult && drinkCount > 0) {
-      const roundedGrams = roundTo(conversionResult.ethanolGrams, 2)
-      onAmountChange(String(roundedGrams))
-      onUnitChange('g')
-      onConverted?.(drinkCount, drinkUnit, roundedGrams)
-    }
-  }, [conversionResult, drinkCount, drinkUnit, onAmountChange, onUnitChange, onConverted])
+  // NOTE: a useEffect here used to push the conversion to the parent on
+  // MOUNT (with the default "2 US shots of spirits"). The parent only
+  // renders this component while the unit is shot/drink, so that immediate
+  // onUnitChange('g') unmounted the whole calculator within one frame —
+  // its controls were unreachable and the amount was silently overwritten
+  // with the default conversion. Conversions are now pushed ONLY from
+  // user-initiated handlers below.
 
-  // ─── Handle drink count change ────────────────────────────────────────────
-  const handleDrinkCountChange = (value: number) => {
-    setDrinkCount(value)
-    // Update parent with the calculated grams
-    const volumeMl = shotSize?.volumeMl ?? 44.36
-    const abv = beveragePreset?.abv ?? 40
-    const result = shotsToGrams({ shots: value, shotVolumeMl: volumeMl, abv })
+  /** Push the current conversion up to the dose-logger form. */
+  const pushConversion = (result: ReturnType<typeof shotsToGrams>, count: number) => {
     if (result) {
       const roundedGrams = roundTo(result.ethanolGrams, 2)
       onAmountChange(String(roundedGrams))
       onUnitChange('g')
-      onConverted?.(value, drinkUnit, roundedGrams)
+      onConverted?.(count, drinkUnit, roundedGrams)
     }
+  }
+
+  // ─── Handle drink count change ────────────────────────────────────────────
+  const handleDrinkCountChange = (value: number) => {
+    setDrinkCount(value)
+    const abv = beveragePreset?.abv ?? 40
+    const result = shotsToGrams({ shots: value, shotVolumeMl: effectiveVolumeMl, abv })
+    pushConversion(result, value)
   }
 
   // ─── Handle beverage type change ──────────────────────────────────────────
@@ -87,15 +109,11 @@ export function AlcoholCalculatorFields({
     setBeverageId(id)
     const preset = getBeveragePreset(id)
     if (preset) {
-      // Recalculate with new ABV
-      const volumeMl = shotSize?.volumeMl ?? 44.36
+      const volumeMl = drinkUnit === 'drinks'
+        ? (DRINK_SERVING_ML[id] ?? shotSize?.volumeMl ?? 44.36)
+        : (shotSize?.volumeMl ?? 44.36)
       const result = shotsToGrams({ shots: drinkCount, shotVolumeMl: volumeMl, abv: preset.abv })
-      if (result) {
-        const roundedGrams = roundTo(result.ethanolGrams, 2)
-        onAmountChange(String(roundedGrams))
-        onUnitChange('g')
-        onConverted?.(drinkCount, drinkUnit, roundedGrams)
-      }
+      pushConversion(result, drinkCount)
     }
   }
 
@@ -104,21 +122,31 @@ export function AlcoholCalculatorFields({
     setShotSizeId(id)
     const size = getShotSize(id)
     if (size) {
-      // Recalculate with new volume
       const abv = beveragePreset?.abv ?? 40
-      const result = shotsToGrams({ shots: drinkCount, shotVolumeMl: size.volumeMl, abv })
-      if (result) {
-        const roundedGrams = roundTo(result.ethanolGrams, 2)
-        onAmountChange(String(roundedGrams))
-        onUnitChange('g')
-        onConverted?.(drinkCount, drinkUnit, roundedGrams)
-      }
+      const volumeMl = drinkUnit === 'drinks'
+        ? (DRINK_SERVING_ML[beverageId] ?? size.volumeMl)
+        : size.volumeMl
+      const result = shotsToGrams({ shots: drinkCount, shotVolumeMl: volumeMl, abv })
+      pushConversion(result, drinkCount)
     }
   }
 
   // ─── Handle drink unit toggle ──────────────────────────────────────────────
   const handleDrinkUnitToggle = (newUnit: 'shots' | 'drinks') => {
     setDrinkUnit(newUnit)
+    // The serving volume differs between modes — recompute and re-push so
+    // the parent's grams match the newly-selected unit.
+    const abv = beveragePreset?.abv ?? 40
+    const volumeMl = newUnit === 'drinks'
+      ? (DRINK_SERVING_ML[beverageId] ?? shotSize?.volumeMl ?? 44.36)
+      : (shotSize?.volumeMl ?? 44.36)
+    const result = shotsToGrams({ shots: drinkCount, shotVolumeMl: volumeMl, abv })
+    if (result) {
+      const roundedGrams = roundTo(result.ethanolGrams, 2)
+      onAmountChange(String(roundedGrams))
+      onUnitChange('g')
+      onConverted?.(drinkCount, newUnit, roundedGrams)
+    }
   }
 
   // Get the appropriate drink size label based on beverage type
@@ -127,11 +155,15 @@ export function AlcoholCalculatorFields({
       case 'shots':
         return shotSize?.label ?? 'US shot (1.5 fl oz)'
       case 'drinks':
-        // Different beverages have different "drink" definitions
-        if (beverageId === 'beer') return '12 fl oz can/bottle'
+        // Different beverages have different "drink" definitions.
+        // (Ids fixed to match BEVERAGE_PRESETS — the previous
+        // 'fortified-wine'/'high-proof' ids never existed, so those branches
+        // were dead.)
+        if (beverageId === 'beer' || beverageId === 'beer-strong' || beverageId === 'cider') return '12 fl oz can/bottle'
         if (beverageId === 'wine') return '5 fl oz glass'
-        if (beverageId === 'fortified-wine') return '3 fl oz glass'
-        if (beverageId === 'spirits' || beverageId === 'high-proof') return shotSize?.label ?? 'US shot (1.5 fl oz)'
+        if (beverageId === 'wine-fortified') return '3 fl oz glass'
+        if (beverageId === 'sake') return '1 go (180 mL)'
+        if (beverageId.startsWith('spirits')) return shotSize?.label ?? 'US shot (1.5 fl oz)'
         return 'Standard serving'
     }
   }

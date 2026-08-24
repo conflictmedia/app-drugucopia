@@ -27,7 +27,17 @@ function loadSettings(): TimelineNotificationSettings {
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      notificationCooldownMinutes: Math.max(1, Math.min(60, parsed.notificationCooldownMinutes ?? 1)),
+      // BUGFIX: fall back to the DEFAULT (5 min), not 1. Settings written by
+      // an older app version (before this field existed) previously collapsed
+      // to a 1-minute cooldown and let phase notifications spam.
+      notificationCooldownMinutes: Math.max(
+        1,
+        Math.min(
+          60,
+          parsed.notificationCooldownMinutes ??
+            DEFAULT_SETTINGS.notificationCooldownMinutes,
+        ),
+      ),
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -55,10 +65,12 @@ export const useTimelineNotificationStore = create<TimelineNotificationState>(
     isLoaded: false,
 
     initialize: () => {
-      if (get().isLoaded) return;
-
-      const settings = loadSettings();
-      set({ settings, isLoaded: true });
+      // Guard only the load; the storage listener must be re-registrable
+      // after a cleanup + re-mount (React StrictMode), or cross-tab sync dies.
+      if (!get().isLoaded) {
+        const settings = loadSettings();
+        set({ settings, isLoaded: true });
+      }
 
       // Cross-tab sync
       const onStorage = (e: StorageEvent) => {
@@ -69,7 +81,14 @@ export const useTimelineNotificationStore = create<TimelineNotificationState>(
               settings: {
                 ...DEFAULT_SETTINGS,
                 ...parsed,
-                notificationCooldownMinutes: Math.max(1, Math.min(60, parsed.notificationCooldownMinutes ?? 1)),
+                notificationCooldownMinutes: Math.max(
+                  1,
+                  Math.min(
+                    60,
+                    parsed.notificationCooldownMinutes ??
+                      DEFAULT_SETTINGS.notificationCooldownMinutes,
+                  ),
+                ),
               },
             });
           } catch {}
