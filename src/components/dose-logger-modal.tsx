@@ -1488,7 +1488,15 @@ export function DoseLoggerModal({
           maxHeight="80dvh"
           footer={renderFormActions()}
         >
-          {renderFormContent()}
+          {/* Wrap content in a <form onSubmit> so pressing Enter inside any
+              input (substance search, amount, notes, etc.) submits the dose
+              log — matches the desktop dialog behaviour. Previously mobile
+              users had to scroll down to the footer button to log. The
+              footer's "Log Dose" button calls handleSubmit() directly via
+              onClick, so it works whether or not it's inside this form. */}
+          <form onSubmit={onSubmit} className="contents">
+            {renderFormContent()}
+          </form>
         </BottomSheet>
       )
     }

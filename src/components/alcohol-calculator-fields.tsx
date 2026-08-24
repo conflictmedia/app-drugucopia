@@ -189,7 +189,7 @@ export function AlcoholCalculatorFields({
       {/* Beverage & Drink Size selectors */}
       <div className="grid grid-cols-2 gap-3">
         {/* Beverage Type */}
-        <div className="space-y-1.5">
+        <div className="min-w-0 space-y-1.5">
           <Label className="flex items-center gap-1 text-xs">
             <Wine className="h-3.5 w-3.5" />
             Beverage
@@ -208,7 +208,7 @@ export function AlcoholCalculatorFields({
         </div>
 
         {/* Drink Size */}
-        <div className="space-y-1.5">
+        <div className="min-w-0 space-y-1.5">
           <Label className="flex items-center gap-1 text-xs">
             <Beaker className="h-3.5 w-3.5" />
             Drink Size
@@ -238,22 +238,20 @@ export function AlcoholCalculatorFields({
             <button
               type="button"
               onClick={() => handleDrinkUnitToggle('shots')}
-              className={`px-2 py-0.5 transition-colors ${
-                drinkUnit === 'shots'
+              className={`px-2 py-0.5 transition-colors ${drinkUnit === 'shots'
                   ? 'bg-primary text-primary-content'
                   : 'hover:bg-base-200'
-              }`}
+                }`}
             >
               Shots
             </button>
             <button
               type="button"
               onClick={() => handleDrinkUnitToggle('drinks')}
-              className={`px-2 py-0.5 transition-colors ${
-                drinkUnit === 'drinks'
+              className={`px-2 py-0.5 transition-colors ${drinkUnit === 'drinks'
                   ? 'bg-primary text-primary-content'
                   : 'hover:bg-base-200'
-              }`}
+                }`}
             >
               Drinks
             </button>

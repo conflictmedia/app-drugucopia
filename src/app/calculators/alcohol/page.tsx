@@ -120,7 +120,7 @@ export default function AlcoholCalculatorPage() {
       <Card className="p-6 space-y-6">
         {/* Beverage & shot size selectors — shared */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="form-control space-y-1.5">
+          <div className="form-control min-w-0 space-y-1.5">
             <Label className="flex items-center gap-1.5">
               <GlassWater className="h-4 w-4" /> Beverage Type
             </Label>
@@ -151,7 +151,7 @@ export default function AlcoholCalculatorPage() {
             )}
           </div>
 
-          <div className="form-control space-y-1.5">
+          <div className="form-control min-w-0 space-y-1.5">
             <Label className="flex items-center gap-1.5">
               <Beaker className="h-4 w-4" /> Shot Size
             </Label>
