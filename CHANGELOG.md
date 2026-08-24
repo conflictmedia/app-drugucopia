@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.8] - 2026-08-24
+
+### Fixed
+- Reminder time ticks live
+- Enter after inputing dosage in the modal now logs the dose
+- alc calc text overflow
+- a bit of the lag in active session
+
 ## [0.3.7] - 2026-08-24
 
 ### Fixed
