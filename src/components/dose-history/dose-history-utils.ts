@@ -126,15 +126,22 @@ export function applyHistoryFilters(doses: DoseLog[], filters: HistoryFilter): D
 
 /** Group doses by day for the "Today / Yesterday / Older" sections. */
 export function groupDosesByDay(doses: DoseLog[]): { label: string; date: string; doses: DoseLog[] }[] {
+  // BUGFIX: bucket by the LOCAL calendar day. Slicing the UTC ISO timestamp
+  // grouped doses by the UTC day, which contradicted the rest of the app
+  // (the live history page groups by local day) and misfiled doses taken
+  // near local midnight for every non-UTC user.
+  const localDay = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
   const byDay = new Map<string, DoseLog[]>()
   for (const d of doses) {
-    const dateStr = d.timestamp.slice(0, 10)
+    const dateStr = localDay(new Date(d.timestamp))
     if (!byDay.has(dateStr)) byDay.set(dateStr, [])
     byDay.get(dateStr)!.push(d)
   }
 
-  const today = new Date().toISOString().slice(0, 10)
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  const today = localDay(new Date())
+  const yesterday = localDay(new Date(Date.now() - 86_400_000))
 
   const result: { label: string; date: string; doses: DoseLog[] }[] = []
   for (const [dateStr, dayDoses] of byDay) {

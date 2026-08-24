@@ -397,12 +397,24 @@ export function checkSingleSubstanceInteractions(substanceId: string): Interacti
  * Data sources (in priority order):
  *  1. TripSit combos database — 841 pairs with notes and academic sources
  *  2. Per-substance interaction strings — fallback for substances not in TripSit
+ *
+ * @param extras Optional extra substances (e.g. user medications converted to
+ *   Substance objects carrying `med-<uuid>` IDs) that are not part of the
+ *   built-in database. Without this, non-built-in IDs resolve to `undefined`
+ *   and contribute zero interaction pairs.
  */
-export function checkInteractions(substanceIds: string[]): InteractionCheckResult {
+export function checkInteractions(
+  substanceIds: string[],
+  extras?: Substance[],
+): InteractionCheckResult {
   const crossToleranceMap = new Map<string, string[]>();
+  const extraMap = new Map<string, Substance>();
+  if (extras) {
+    for (const e of extras) extraMap.set(e.id, e);
+  }
 
   const resolvedSubs = substanceIds
-    .map((id) => resolveSubstance(id))
+    .map((id) => extraMap.get(id) ?? resolveSubstance(id))
     .filter(Boolean) as Substance[];
 
   if (resolvedSubs.length < 2) {

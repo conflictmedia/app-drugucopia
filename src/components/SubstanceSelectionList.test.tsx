@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SubstanceSelectionList } from '@/components/SubstanceSelectionList';
 import { useToleranceNotificationStore } from '@/store/tolerance-notification-store';
@@ -18,8 +18,8 @@ describe('SubstanceSelectionList', () => {
   ];
 
   beforeEach(() => {
-    (getAllSubstances as vi.Mock).mockReturnValue(mockSubstances);
-    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+    (getAllSubstances as unknown as Mock).mockReturnValue(mockSubstances);
+    (useToleranceNotificationStore as unknown as Mock).mockReturnValue({
       settings: {
         enabled: true,
         notifyOnHigh: true,
@@ -54,7 +54,7 @@ describe('SubstanceSelectionList', () => {
 
   it('removes a substance from enabledSubstances when its chip X is clicked', () => {
     const updateSettings = vi.fn();
-    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+    (useToleranceNotificationStore as unknown as Mock).mockReturnValue({
       settings: {
         enabled: true,
         notifyOnHigh: true,
@@ -85,7 +85,7 @@ describe('SubstanceSelectionList', () => {
 
   it('calls updateSettings when toggling substance', () => {
     const updateSettings = vi.fn();
-    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+    (useToleranceNotificationStore as unknown as Mock).mockReturnValue({
       settings: { enabledSubstances: {}, substanceThresholds: {}, notifyOnHigh: true, notifyOnLow: false, notifyOnBaseline: false },
       updateSettings,
       isLoaded: true,
@@ -119,7 +119,7 @@ describe('SubstanceSelectionList', () => {
   });
 
   it('shows loading spinner while store is hydrating', () => {
-    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+    (useToleranceNotificationStore as unknown as Mock).mockReturnValue({
       settings: {
         enabled: true,
         notifyOnHigh: true,
@@ -146,7 +146,7 @@ describe('SubstanceSelectionList', () => {
 
   it('enables all visible substances when "Select all visible" is clicked', () => {
     const updateSettings = vi.fn();
-    (useToleranceNotificationStore as vi.Mock).mockReturnValue({
+    (useToleranceNotificationStore as unknown as Mock).mockReturnValue({
       settings: {
         enabled: true,
         notifyOnHigh: true,
@@ -173,7 +173,7 @@ describe('SubstanceSelectionList', () => {
       { id: 'caffeine', name: 'Caffeine', commonNames: ['Coffee'], categories: ['stimulants'] },
       { id: 'custom-1', name: 'Custom Substance', commonNames: [], categories: ['other'] },
     ];
-    (getAllSubstances as vi.Mock).mockReturnValue(customSubstances);
+    (getAllSubstances as unknown as Mock).mockReturnValue(customSubstances);
     render(<SubstanceSelectionList />);
     expect(screen.getByText('Other')).toBeInTheDocument();
     expect(screen.getByText('Custom Substance')).toBeInTheDocument();

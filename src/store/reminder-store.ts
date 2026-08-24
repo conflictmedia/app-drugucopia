@@ -3,6 +3,16 @@ import { ReminderSchedule, ActiveReminder, DoseLog } from '../types'
 import { showBrowserNotification } from '@/lib/notification-utils'
 import { playReminderSound } from '@/lib/sound-utils'
 import { shouldPlayWebSound } from '@/lib/tauri-bridge'
+import { useDoseStore } from './dose-store'
+
+/**
+ * Local-timezone yyyy-MM-dd key. Dose timestamps are UTC ISO strings; slicing
+ * them (or `new Date().toISOString()`) bucketed doses by the *UTC* calendar
+ * day, which miscounted "today" for every non-UTC user around midnight.
+ */
+function localDateKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const SCHEDULES_KEY = 'drugucopia-reminder-schedules'
 const ACTIVE_KEY = 'drugucopia-reminder-active'
@@ -69,42 +79,45 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
   soundEnabled: true,
   isLoaded: false,
 
+  // Tracks the currently-registered cross-tab storage listener so cleanup
+  // removes exactly what was registered (and re-init after cleanup works —
+  // previously the isLoaded guard prevented re-registration forever).
   initialize: () => {
-    if (get().isLoaded) return
+    if (!get().isLoaded) {
+      try {
+        const schedules = JSON.parse(localStorage.getItem(SCHEDULES_KEY) || '[]')
+        const active = JSON.parse(localStorage.getItem(ACTIVE_KEY) || '[]')
+        const deletedScheduleIds = new Set<string>(
+          JSON.parse(localStorage.getItem(DELETED_SCHEDULES_KEY) || '[]'),
+        )
+        const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
 
-    try {
-      const schedules = JSON.parse(localStorage.getItem(SCHEDULES_KEY) || '[]')
-      const active = JSON.parse(localStorage.getItem(ACTIVE_KEY) || '[]')
-      const deletedScheduleIds = new Set<string>(
-        JSON.parse(localStorage.getItem(DELETED_SCHEDULES_KEY) || '[]'),
-      )
-      const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
-
-      // Check current notification permission
-      // Use the Tauri-aware check which works on both web and native
-      let perm: NotificationPermission | 'default' = 'default'
-      if (typeof window !== 'undefined') {
-        if ('Notification' in window) {
-          perm = Notification.permission
+        // Check current notification permission
+        // Use the Tauri-aware check which works on both web and native
+        let perm: NotificationPermission | 'default' = 'default'
+        if (typeof window !== 'undefined') {
+          if ('Notification' in window) {
+            perm = Notification.permission
+          }
+          // Note: For Tauri, the permission check is async. We'll do a
+          // follow-up check after initialization. The sync check above
+          // works for the initial render; the async check in
+          // checkNotificationPermissionStatus() will correct it if needed.
         }
-        // Note: For Tauri, the permission check is async. We'll do a
-        // follow-up check after initialization. The sync check above
-        // works for the initial render; the async check in
-        // checkNotificationPermissionStatus() will correct it if needed.
-      }
 
-      set({
-        schedules,
-        activeReminders: active,
-        deletedScheduleIds,
-        notificationPermission: perm,
-        autoStartEnabled: settings.autoStartEnabled ?? true,
-        soundEnabled: settings.soundEnabled ?? true,
-        isLoaded: true,
-      })
-    } catch (e) {
-      console.error('Failed to load reminder state', e)
-      set({ isLoaded: true })
+        set({
+          schedules,
+          activeReminders: active,
+          deletedScheduleIds,
+          notificationPermission: perm,
+          autoStartEnabled: settings.autoStartEnabled ?? true,
+          soundEnabled: settings.soundEnabled ?? true,
+          isLoaded: true,
+        })
+      } catch (e) {
+        console.error('Failed to load reminder state', e)
+        set({ isLoaded: true })
+      }
     }
 
     // Cross-tab sync via storage event
@@ -137,7 +150,6 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   },
-
   addSchedule: (schedule) => {
     set((state) => {
       const updated = [...state.schedules, schedule]
@@ -180,20 +192,24 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
     )
     if (!schedule) return
 
-    // Check maxDosesPerDay — count actual doses logged today from localStorage
-    // This prevents creating a reminder after the last dose of the day.
-    // e.g. NAC 2x daily: dose #1 → create reminder, dose #2 → no reminder needed
+    // Check maxDosesPerDay — count actual doses logged today.
+    // BUGFIX: read the in-memory dose store instead of localStorage. The
+    // dose-store persists with a 300 ms debounce, so the localStorage copy
+    // was always stale at this point — the count came out one short and a
+    // "next dose" reminder was created even after the last allowed dose of
+    // the day (e.g. maxDosesPerDay: 1 → reminder nudged a 2nd forbidden dose).
+    // Day bucketing also now uses the LOCAL calendar day, not the UTC day.
     if (schedule.maxDosesPerDay > 0) {
       try {
-        const allDoses: DoseLog[] = JSON.parse(localStorage.getItem('drugucopia-dose-logs') || '[]')
-        const today = new Date().toISOString().slice(0, 10)
+        const allDoses: DoseLog[] = useDoseStore.getState().doses
+        const todayKey = localDateKey(new Date())
         const dosesToday = allDoses.filter(
           (d) =>
             d.substanceName.toLowerCase() === schedule.substanceName.toLowerCase() &&
-            d.timestamp.slice(0, 10) === today,
+            localDateKey(new Date(d.timestamp)) === todayKey,
         ).length
-        // If the user has already logged maxDosesPerDay doses today (including
-        // the current one which just got persisted), don't start another timer.
+        // All of today's doses are already in the in-memory store (including
+        // the one that triggered this timer), so compare with >=.
         if (dosesToday >= schedule.maxDosesPerDay) return
       } catch {
         // If we can't read dose logs, fall through and create the timer
@@ -204,7 +220,7 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
     const firesAt = new Date(
       doseTime.getTime() + schedule.intervalMinutes * 60_000,
     )
-    const today = new Date().toISOString().slice(0, 10)
+    const today = localDateKey(new Date())
 
     const timer: ActiveReminder = {
       id: crypto.randomUUID(),
@@ -284,6 +300,7 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
         return {
           ...r,
           status: 'fired' as const,
+          firedAt: new Date(now).toISOString(),
           dosesRemindedToday: r.dosesRemindedToday + 1,
         }
       }
@@ -296,6 +313,7 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
         return {
           ...r,
           status: 'fired' as const,
+          firedAt: new Date(now).toISOString(),
           snoozedUntil: undefined,
           dosesRemindedToday: r.dosesRemindedToday + 1,
         }
@@ -318,12 +336,17 @@ export const useReminderStore = create<ReminderState>((set, get) => ({
         }
       }
 
-      // Cleanup: remove dismissed and old fired reminders (> 2 hours)
+      // Cleanup: remove dismissed and old fired reminders (> 2 hours since
+      // they ACTUALLY fired). Comparing against `firedAt` (not `firesAt`)
+      // keeps a snoozed reminder from being cleaned before it is ever seen:
+      // snoozing 60 min at firesAt+1h59m used to re-fire at ~3h past the
+      // ORIGINAL firesAt and get filtered in the same tick.
       const cleaned = updated.filter((r) => {
         if (r.status === 'dismissed') return false
+        const effectiveFiredAt = r.firedAt ?? r.firesAt
         if (
           r.status === 'fired' &&
-          now - new Date(r.firesAt).getTime() > 2 * 60 * 60_000
+          now - new Date(effectiveFiredAt).getTime() > 2 * 60 * 60_000
         )
           return false
         return true

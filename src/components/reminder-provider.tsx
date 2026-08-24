@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useReminderStore } from '@/store/reminder-store'
 import { useToleranceNotificationStore } from '@/store/tolerance-notification-store'
+import { useTimelineNotificationStore } from '@/store/timeline-notification-store'
 import { startReminderEngine, stopReminderEngine } from '@/lib/reminder-engine'
 import { startTimelineNotifications, stopTimelineNotifications } from '@/lib/timeline-notifications'
 import { startToleranceNotifications, stopToleranceNotifications } from '@/lib/tolerance-notifications'
@@ -25,11 +26,17 @@ let permissionPrompted = false
 export function ReminderProvider({ children }: { children: React.ReactNode }) {
   const initialize = useReminderStore((s) => s.initialize)
   const initializeTolerance = useToleranceNotificationStore((s) => s.initialize)
+  const initializeTimeline = useTimelineNotificationStore((s) => s.initialize)
 
   useEffect(() => {
-    // Initialize both stores
+    // Initialize all stores. NOTE: the timeline store MUST be initialized
+    // here (not only on the /settings page): startTimelineNotifications()
+    // below reads its settings, and before this fix the persisted
+    // enabled/cooldown values were ignored on every launch unless the user
+    // happened to visit Settings first.
     const cleanup = initialize()
     initializeTolerance()
+    initializeTimeline()
 
     // Preload sound for web (Tauri uses OS sound)
     if (shouldPlayWebSound()) {

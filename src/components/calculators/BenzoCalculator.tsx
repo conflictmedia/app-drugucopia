@@ -1,7 +1,6 @@
 'use client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BENZODIAZEPINES, convertDose, getBenzoInfo } from '@/lib/calculators/benzo-equivalence';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
@@ -14,13 +13,15 @@ export function BenzoCalculator() {
   const [fromBenzo, setFromBenzo] = useState('alprazolam');
   const [toBenzo, setToBenzo] = useState('diazepam');
   const [fromDose, setFromDose] = useState(1);
-  const [result, setResult] = useState<ReturnType<typeof convertDose> | null>(null);
-  const [showInfo, setShowInfo] = useState(false);
 
-  const handleConvert = () => {
-    const res = convertDose(fromBenzo, fromDose, toBenzo);
-    setResult(res);
-  };
+  // BUGFIX: the result used to be computed only on button click, so changing
+  // a dropdown after calculating showed the OLD number next to the NEW drug
+  // name (e.g. "1 mg Alprazolam ≈ 20 mg Clonazepam" — actually the diazepam
+  // figure). Deriving it from the current inputs makes it always correct.
+  const result = useMemo(
+    () => (fromDose > 0 ? convertDose(fromBenzo, fromDose, toBenzo) : null),
+    [fromBenzo, fromDose, toBenzo],
+  );
 
   const fromInfo = getBenzoInfo(fromBenzo);
   const toInfo = getBenzoInfo(toBenzo);
@@ -75,9 +76,9 @@ export function BenzoCalculator() {
           />
         </div>
 
-        <Button variant="default" className="w-full" onClick={handleConvert}>
-          Calculate Equivalent Dose
-        </Button>
+        {/* Result updates live — the old "Calculate" button was removed
+            because its click-only computation went stale whenever the drug
+            dropdowns changed afterwards. */}
 
         {result && (
           <div className="bg-base-200/50 rounded-lg p-4 space-y-3">
@@ -94,7 +95,12 @@ export function BenzoCalculator() {
               </div>
               <div>
                 <span className="font-medium">Potency Ratio:</span>{' '}
-                1 mg {fromInfo?.name.split(' ')[0]} ≈ {result.equivalentDose / fromDose} mg {toInfo?.name.split(' ')[0]}
+                {/* Guard against 0/0 → NaN when the dose field is empty/zero */}
+                1 mg {fromInfo?.name.split(' ')[0]} ≈{' '}
+                {fromDose > 0
+                  ? `${result.equivalentDose / fromDose} mg`
+                  : '—'}{' '}
+                {toInfo?.name.split(' ')[0]}
               </div>
             </div>
 

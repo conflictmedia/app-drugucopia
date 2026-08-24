@@ -313,7 +313,10 @@ export function evaluateMathExpression(
         case '*': case 'x': case '×': result *= chainVal; break
         case '+': result += chainVal; break
         case '-': result -= chainVal; break
-        case '/': result /= chainVal; break
+        case '/':
+          if (chainVal === 0) return null // guard against Infinity (e.g. "100/5/0")
+          result /= chainVal
+          break
       }
     }
   }
@@ -364,6 +367,21 @@ function parseQuickInput(
   }
 
   const mathEval = evaluateMathExpression(inputWithoutRoute)
+
+  // A dose can never be negative or non-finite. Expressions like "5-10mg"
+  // evaluate to 5 − 10 = −5 — reject them here rather than persisting a
+  // nonsensical amount (the submit handler re-validates as a second gate).
+  if (mathEval && (!Number.isFinite(mathEval.result) || mathEval.result <= 0)) {
+    return {
+      substanceName: '',
+      substanceId: '',
+      amount: '',
+      unit: null,
+      route: extractedRoute,
+      categories: [],
+      mathResult: null,
+    }
+  }
 
   if (mathEval) {
     const beforeMath = inputWithoutRoute.slice(0, mathEval.matchStart).trim()
@@ -1230,8 +1248,10 @@ export function DoseLoggerModal({
     const allIds = [selectedId, ...medSubstances.map(s => s.id)]
 
     // Use the shared engine. We pass the medSubstances as extras so
-    // `med-<uuid>` IDs resolve correctly.
-    const result = checkInteractionsEngine(allIds)
+    // `med-<uuid>` IDs resolve correctly (they are not in the built-in
+    // substance database — without extras they resolve to undefined and
+    // every medication interaction pair was silently dropped).
+    const result = checkInteractionsEngine(allIds, medSubstances)
 
     return result.pairs.filter(p => p.severity !== 'low-risk')
   }, [selectedSubstance, activeMedications])
@@ -1272,6 +1292,20 @@ export function DoseLoggerModal({
     if (!substanceName || !amount) {
       submitLockRef.current = false
       toast({ title: 'Missing fields', description: 'Please select a substance and enter an amount', variant: 'destructive' })
+      return
+    }
+    // Validate the numeric amount before saving. Previously only string
+    // truthiness was checked, so quick-input expressions like "5-10mg"
+    // (evaluated as 5 − 10 = −5), "abc" (NaN) or "100/5/0" (Infinity)
+    // were persisted directly into the dose log.
+    const parsedAmount = parseFloat(amount)
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      submitLockRef.current = false
+      toast({
+        title: 'Invalid amount',
+        description: `"${amount}" is not a valid dose. Enter a positive number (e.g. "10mg" or "0.5 g").`,
+        variant: 'destructive',
+      })
       return
     }
     setLoading(true)

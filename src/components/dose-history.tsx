@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Trash2, Calendar, Clock, Droplets, Activity, Loader2, Download, Upload, Cloud, CloudOff, Lock, CheckCircle2, RotateCcw, Pencil, FileJson, FileText, ChevronDown, AlertTriangle, Plus, Search, X, CalendarDays } from 'lucide-react'
 import { categoryColors, categories } from '@/lib/categories'
+import type { SubstanceCategory } from '@/lib/types'
 import { substances } from '@/lib/substances/index'
 import { toast } from '@/hooks/use-toast'
 import { EditDoseModal } from './edit-dose-modal'
@@ -473,42 +474,89 @@ function parseJSON(text: string): ImportResult {
   return { ok: true, doses }
 }
 
-function parseCSVLine(line: string): string[] {
-  const fields: string[] = []
+/**
+ * Split a CSV document into RECORDS (arrays of fields), honouring RFC 4180
+ * quoted fields — including newlines INSIDE quoted fields.
+ *
+ * The previous implementation split the document on '\n' first and then
+ * parsed each line, which corrupted every export whose Notes field
+ * contained a newline (notes are edited via a Textarea, so multi-line
+ * notes are normal): the first half of the note imported truncated, and
+ * the dangling fragment became a bogus data row that failed Date parsing
+ * and aborted the ENTIRE import with a cryptic "Row N" error.
+ */
+function parseCSVRecords(text: string): string[][] {
+  const doc = text.replace(/^\uFEFF/, '') // strip BOM
+  const records: string[][] = []
+  let fields: string[] = []
   let current = ''
   let inQuotes = false
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        // Escaped quote inside a quoted field
-        current += '"'
-        i++
+  for (let i = 0; i < doc.length; i++) {
+    const ch = doc[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (doc[i + 1] === '"') {
+          current += '"' // escaped quote
+          i++
+        } else {
+          inQuotes = false
+        }
       } else {
-        inQuotes = !inQuotes
+        current += ch // newlines inside quotes are literal data
       }
-    } else if (ch === ',' && !inQuotes) {
+    } else if (ch === '"') {
+      inQuotes = true
+    } else if (ch === ',') {
       fields.push(current)
+      current = ''
+    } else if (ch === '\n' || ch === '\r') {
+      // Treat \r\n and \n as record separators; skip a \r before \n
+      if (ch === '\r' && doc[i + 1] === '\n') i++
+      fields.push(current)
+      records.push(fields)
+      fields = []
       current = ''
     } else {
       current += ch
     }
   }
-  fields.push(current)
-  return fields
+  // Final record (if the file doesn't end with a newline)
+  if (current !== '' || fields.length > 0) {
+    fields.push(current)
+    records.push(fields)
+  }
+  return records.filter((r) => r.some((f) => f.trim() !== ''))
+}
+
+/** Parse a single CSV line that is known to contain no embedded newlines. */
+function parseCSVLine(line: string): string[] {
+  return parseCSVRecords(line)[0] ?? []
+}
+
+/**
+ * Small deterministic string hash (FNV-1a, 32-bit, hex). Used to derive
+ * STABLE ids for CSV-imported doses so re-importing the same backup
+ * detects duplicates instead of silently doubling the history.
+ */
+function csvDedupeHash(input: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
 }
 
 /** Parse a CSV export file produced by exportToCSV. */
 function parseCSV(text: string): ImportResult {
-  // Normalise line endings
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((l) => l.trim())
+  const records = parseCSVRecords(text)
 
-  if (lines.length < 2) {
+  if (records.length < 2) {
     return { ok: false, error: 'CSV file must have a header row and at least one data row.' }
   }
 
-  const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase())
+  const headers = records[0].map((h) => h.trim().toLowerCase())
 
   // Column index lookup — tolerant of extra/missing optional columns
   const col = (name: string) => headers.indexOf(name)
@@ -521,22 +569,41 @@ function parseCSV(text: string): ImportResult {
 
   const doses: DoseLog[] = []
 
-  for (let i = 1; i < lines.length; i++) {
-    const fields = parseCSVLine(lines[i])
+  for (let i = 1; i < records.length; i++) {
+    const fields = records[i]
     const get = (name: string) => (col(name) !== -1 ? (fields[col(name)] ?? '').trim() : '')
 
     const dateStr = get('date')
     const timeStr = get('time')
     const timestampStr = `${dateStr}T${timeStr || '00:00:00'}`
 
+    const substanceName = get('substance')
+    const amount = get('amount')
+    const unit = get('unit')
+    const route = get('route')
+
+    // BUGFIX: imported CSV rows used to get a fresh crypto.randomUUID(),
+    // which made the import preview's duplicate detection (existingIds.has)
+    // always report 0 duplicates — re-importing a backup silently DOUBLED
+    // the history and corrupted analytics/tolerance. A deterministic
+    // content hash keyed on the dose's identity makes re-imports dedupe
+    // correctly while still giving each row a unique-per-content id.
+    const dedupeKey = [
+      substanceName.trim().toLowerCase(),
+      timestampStr.trim(),
+      amount.trim().toLowerCase(),
+      unit.trim().toLowerCase(),
+      route.trim().toLowerCase(),
+    ].join('|')
+    const id = `dose_csv_${csvDedupeHash(dedupeKey)}`
+
     const raw: Record<string, unknown> = {
-      // id is not in the CSV export so always generate a fresh one
-      id: crypto.randomUUID(),
+      id,
       timestamp: timestampStr,
-      substanceName: get('substance'),
-      amount: get('amount'),
-      unit: get('unit'),
-      route: get('route'),
+      substanceName,
+      amount,
+      unit,
+      route,
       // categories column uses "; " as separator (matches exportToCSV)
       categories: get('category')
         .split(';')
@@ -1166,7 +1233,9 @@ export function DoseHistory() {
       .sort((a, b) => b[1] - a[1])
       .map(([id, count]) => ({
         id,
-        label: categoryNames.get(id) || id,
+        // Dose categories are plain strings (user data may contain legacy or
+        // custom values); the catalog map is keyed by the narrower union.
+        label: categoryNames.get(id as SubstanceCategory) || id,
         count,
       }))
   }, [doses])

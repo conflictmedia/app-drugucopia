@@ -17,8 +17,8 @@ export function formatDoseAmount(
   unit: string,
   substanceName?: string
 ): FormattedDoseAmount {
-  // Handle micrograms (μg) - convert to mg if >= 1000
-  if (unit === 'μg' || unit === 'ug' || unit === 'mcg') {
+  // Handle micrograms (both µ U+00B5 and μ U+03BC variants) - convert to mg if >= 1000
+  if (unit === 'μg' || unit === 'µg' || unit === 'ug' || unit === 'mcg') {
     if (amount >= 1000) {
       const converted = amount / 1000
       const formatted = converted % 1 === 0 ? converted.toString() : converted.toFixed(2).replace(/\.?0+$/, '')

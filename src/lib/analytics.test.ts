@@ -87,26 +87,39 @@ describe('Analytics', () => {
     });
 
     it('groups doses by week (Sunday start)', () => {
-      // Use dates relative to now to ensure they're within the range
+      // Use dates relative to now to ensure they're within the range.
+      // NOTE: when this test runs ON a Sunday, lastSunday+1d (Monday) is in
+      // the FUTURE, and weeklyCounts correctly filters future doses out —
+      // which made the original test fail every Sunday. Clamp the second
+      // dose to "now" so it always lands inside the current week.
       const now = new Date();
       // Find the most recent Sunday (or today if today is Sunday)
       const lastSunday = new Date(now);
       lastSunday.setDate(now.getDate() - now.getDay());
-      const lastMonday = new Date(lastSunday);
-      lastMonday.setDate(lastSunday.getDate() + 1);
+      lastSunday.setHours(0, 0, 0, 0);
+      const sameWeekDose = new Date(Math.max(
+        lastSunday.getTime(), // never before the week start (Sunday-midnight edge)
+        Math.min(
+          lastSunday.getTime() + 24 * 60 * 60 * 1000, // "Monday"
+          now.getTime() - 1,                          // never in the future
+        ),
+      ));
       const prevSunday = new Date(lastSunday);
       prevSunday.setDate(lastSunday.getDate() - 7);
 
       const doses = [
         createDose({ timestamp: lastSunday.toISOString() }),
-        createDose({ timestamp: lastMonday.toISOString() }),
+        createDose({ timestamp: sameWeekDose.toISOString() }),
         createDose({ timestamp: prevSunday.toISOString() }),
       ];
 
       const result = weeklyCounts(doses, 4);
-      // Use weekStart (ISO date string) to find entries
-      const lastSundayStart = lastSunday.toISOString().slice(0, 10);
-      const prevSundayStart = prevSunday.toISOString().slice(0, 10);
+      // weekStart keys are LOCAL yyyy-MM-dd strings (date-fns format), so
+      // compare with local — not UTC — date keys.
+      const localKey = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const lastSundayStart = localKey(lastSunday);
+      const prevSundayStart = localKey(prevSunday);
 
       const week1 = result.find(w => w.weekStart === lastSundayStart);
       const week2 = result.find(w => w.weekStart === prevSundayStart);

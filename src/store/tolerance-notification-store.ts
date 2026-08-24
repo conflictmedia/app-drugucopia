@@ -64,10 +64,12 @@ export const useToleranceNotificationStore = create<ToleranceNotificationState>(
     isLoaded: false,
 
     initialize: () => {
-      if (get().isLoaded) return;
-
-      const settings = loadSettings();
-      set({ settings, isLoaded: true });
+      // Guard only the load; the storage listener must be re-registrable
+      // after a cleanup + re-mount (React StrictMode), or cross-tab sync dies.
+      if (!get().isLoaded) {
+        const settings = loadSettings();
+        set({ settings, isLoaded: true });
+      }
 
       // Cross-tab sync
       const onStorage = (e: StorageEvent) => {

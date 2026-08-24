@@ -176,10 +176,20 @@ export const useMedicationStore = create<MedicationState>((set, get) => ({
     const substanceNames = substanceIds
       .map(id => getSubstanceByIdAll(id)?.name.toLowerCase())
       .filter(Boolean) as string[];
-    
+
     if (substanceNames.length === 0) return [];
-    
-    const medNames = meds.map(m => m.name.toLowerCase());
+
+    // Include each medication's generic name (when set) so brand-name entries
+    // like "Prozac" still resolve against the substance database via
+    // "fluoxetine". Previously only `m.name` was fed to the checker, so
+    // brand-only medications contributed zero interaction pairs.
+    const medNames = meds.flatMap(m => {
+      const names = [m.name.toLowerCase()];
+      if (m.genericName && m.genericName.toLowerCase() !== m.name.toLowerCase()) {
+        names.push(m.genericName.toLowerCase());
+      }
+      return names;
+    });
     const medTypeClasses = meds
       .filter(m => m.medicationType)
       .map(m => MEDICATION_TYPE_TO_SUBSTANCE_CLASS[m.medicationType!].toLowerCase());
@@ -196,6 +206,7 @@ export const useMedicationStore = create<MedicationState>((set, get) => ({
         const subName = isMedA ? pair.substanceB : pair.substanceA;
         const med = meds.find(m => 
           m.name.toLowerCase() === medName.toLowerCase() || 
+          m.genericName?.toLowerCase() === medName.toLowerCase() || 
           (m.medicationType && MEDICATION_TYPE_TO_SUBSTANCE_CLASS[m.medicationType].toLowerCase() === medName.toLowerCase())
         );
         
@@ -204,6 +215,14 @@ export const useMedicationStore = create<MedicationState>((set, get) => ({
             getSubstanceByIdAll(id)?.name.toLowerCase() === subName.toLowerCase()
           ) || '';
           
+          // Map to a valid Contraindication['source']. The interaction engine
+          // emits either 'tripsit' or substance ids/names in `sources` — the
+          // latter are NOT valid members of the union and previously slipped
+          // through via an unchecked cast.
+          const source: Contraindication['source'] = pair.sources.includes('tripsit')
+            ? 'tripsit'
+            : 'substance-data';
+          
           warnings.push({
             medicationId: med.id,
             medicationName: med.name,
@@ -211,7 +230,7 @@ export const useMedicationStore = create<MedicationState>((set, get) => ({
             substanceId: subId,
             severity: pair.severity,
             description: pair.description || pair.matchedTerms.join(', '),
-            source: pair.sources[0] as Contraindication['source'],
+            source,
           });
         }
       }

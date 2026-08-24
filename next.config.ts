@@ -31,27 +31,16 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  typescript: {
-    ignoreBuildErrors: true,
-  },
   reactStrictMode: true,
   env: {
     NEXT_PUBLIC_BASE_PATH: "",
   },
-  async redirects() {
-    return [
-      {
-        source: "/dxm-calculator",
-        destination: "/calculators/dxm",
-        permanent: true,
-      },
-      {
-        source: "/kratom-calculator",
-        destination: "/calculators/kratom",
-        permanent: true,
-      },
-    ];
-  },
+  // NOTE: `redirects()` was previously returned here for /dxm-calculator and
+  // /kratom-calculator, but with `output: "export"` there is no Next.js
+  // server at runtime, so those redirects were silently ignored and the
+  // legacy links 404'd. The redirects are now real static pages under
+  // src/app/dxm-calculator/ and src/app/kratom-calculator/ that emit a
+  // build-time HTML redirect instead.
 };
 
 export default nextConfig;
