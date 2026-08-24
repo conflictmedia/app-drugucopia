@@ -20,21 +20,14 @@ export function ActiveReminders() {
   const snoozeReminder = useReminderStore((s) => s.snoozeReminder)
   const dismissAllFired = useReminderStore((s) => s.dismissAllFired)
 
-  // Align updates to minute boundaries instead of polling four times/minute.
+  // Tick every 1 second so the countdown display updates live (previously
+  // aligned to minute boundaries, which left the countdown frozen for up to
+  // 60s — and made newly-created reminders appear to show "1m 33s" instead
+  // of "1m" because `now` was the stale start-of-minute value).
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | undefined
-    const timeoutId = setTimeout(() => {
-      setNow(Date.now())
-      intervalId = setInterval(
-        () => setNow(Date.now()),
-        60_000,
-      )
-    }, 60_000 - (Date.now() % 60_000))
-    return () => {
-      clearTimeout(timeoutId)
-      if (intervalId) clearInterval(intervalId)
-    }
+    const id = setInterval(() => setNow(Date.now()), 1_000)
+    return () => clearInterval(id)
   }, [])
 
   const running = useMemo(
