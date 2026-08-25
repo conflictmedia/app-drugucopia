@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
 import Link from 'next/link'
 import {
@@ -260,6 +260,9 @@ function GroupCard({
   // mounted gate — prevents ResponsiveContainer from rendering before the
   // browser has computed the parent's layout (which triggers a 0×0 warning).
   const [mounted, setMounted] = useState(false)
+  // Suppress Recharts tooltip storm during touch scroll gestures
+  const [touchScrolling, setTouchScrolling] = useState(false)
+  const touchScrollTimer = useRef<number | null>(null)
 
   useEffect(() => {
     setMounted(true)
@@ -663,6 +666,25 @@ function GroupCard({
             tabIndex={0}
             role="application"
             aria-label={`Intensity timeline chart for ${group.substanceName}. Use arrow keys to navigate, Escape to clear.`}
+            onTouchStart={() => {
+              setTouchScrolling(true)
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+            }}
+            onTouchMove={() => {
+              setTouchScrolling(true)
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+              touchScrollTimer.current = window.setTimeout(() => {
+                setTouchScrolling(false)
+                touchScrollTimer.current = null
+              }, 400)
+            }}
+            onTouchEnd={() => {
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+              touchScrollTimer.current = window.setTimeout(() => {
+                setTouchScrolling(false)
+                touchScrollTimer.current = null
+              }, 300)
+            }}
             onKeyDown={(e) => {
               // 1.7: Keyboard navigation — dispatch synthetic mousemove events
               // to move Recharts' tooltip. Finds the chart's <svg> and computes
@@ -795,10 +817,12 @@ function GroupCard({
                     tickFormatter={(v) => `${v}%`}
                     label={{ value: 'Intensity', angle: -90, position: 'insideLeft', fontSize: 9, fill: 'currentColor', opacity: 0.6, dy: 20 }}
                   />
-                  <Tooltip
-                    content={<ChartTooltip series={config.series} windowStartMs={config.windowStartMs} nowTs={nowTs} />}
-                    cursor={{ stroke: 'rgba(255,255,255,0.3)', strokeWidth: 1, strokeDasharray: '4 4' }}
-                  />
+                  {!touchScrolling && (
+                    <Tooltip
+                      content={<ChartTooltip series={config.series} windowStartMs={config.windowStartMs} nowTs={nowTs} />}
+                      cursor={{ stroke: 'rgba(255,255,255,0.3)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                    />
+                  )}
 
                   {/* Now indicator — position comes from nowTs prop, NOT from
                   config (which is memoized and stable across ticks).
@@ -830,20 +854,7 @@ function GroupCard({
                             >
                               NOW
                             </text>
-                            <circle cx={cx} cy={cy} r={NOW_INDICATOR.dotRadius} fill={NOW_INDICATOR.color}>
-                              <animate
-                                attributeName="opacity"
-                                values="1;0.3;1"
-                                dur={`${NOW_INDICATOR.pulseDurationMs}ms`}
-                                repeatCount="indefinite"
-                              />
-                              <animate
-                                attributeName="r"
-                                values={`${NOW_INDICATOR.dotRadius};${NOW_INDICATOR.dotRadius * 0.7};${NOW_INDICATOR.dotRadius}`}
-                                dur={`${NOW_INDICATOR.pulseDurationMs}ms`}
-                                repeatCount="indefinite"
-                              />
-                            </circle>
+                            <circle cx={cx} cy={cy} r={NOW_INDICATOR.dotRadius} fill={NOW_INDICATOR.color} className="now-pulse-opacity now-pulse-scale" />
                           </g>
                         )
                       }}

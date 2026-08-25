@@ -33,7 +33,17 @@ export function LayoutClient({ children }: LayoutClientProps) {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem('drugucopia-sidebar-expanded') === 'true'
   })
-  const { doseLoggerOpen, doseLoggerPreselect, closeDoseLogger, showOnboardingTour, setOnboardingCompleted } = useUIStore()
+  // Subscribe to individual UI store slices instead of the whole store.
+  // Previously `useUIStore()` (no selector) returned the entire store object,
+  // so toggling a favorite (an unrelated slice) would re-render the entire
+  // layout shell — including AppSidebar, TopBar, BottomNav, MilkdropBackground
+  // wrapper, and the page content children — even though nothing in the shell
+  // actually depends on `favoriteSubstances`.
+  const doseLoggerOpen = useUIStore((s) => s.doseLoggerOpen)
+  const doseLoggerPreselect = useUIStore((s) => s.doseLoggerPreselect)
+  const closeDoseLogger = useUIStore((s) => s.closeDoseLogger)
+  const showOnboardingTour = useUIStore((s) => s.showOnboardingTour)
+  const setOnboardingCompleted = useUIStore((s) => s.setOnboardingCompleted)
   const mounted = useSyncExternalStore(
     () => () => undefined,
     () => true,

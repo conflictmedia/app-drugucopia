@@ -809,6 +809,28 @@
     transition: transform 0.06s ease-out;
   }
 
+  /* ─── SMIL replacement animations: composited transforms avoid SVG
+     geometry recalculation (r animation) and main-thread SMIL tick. */
+  @keyframes now-pulse-opacity {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  @keyframes now-pulse-scale {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(0.7); }
+  }
+  .now-pulse-opacity { animation: now-pulse-opacity 2s ease-in-out infinite; }
+  .now-pulse-scale { animation: now-pulse-scale 2s ease-in-out infinite; transform-origin: center; }
+
+  @keyframes ripple-expand {
+    0% { transform: scale(1); opacity: 0.5; }
+    100% { transform: scale(2); opacity: 0; }
+  }
+  @keyframes focus-flash {
+    0% { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(5); opacity: 0; }
+  }
+
   /* On devices that DON'T support touch (pure mouse/trackpad), suppress
      the active scale — it looks like flicker on click for mouse users. */
   @media (hover: hover) and (pointer: fine) {
@@ -1225,6 +1247,18 @@
   .substance-grid > * {
     content-visibility: auto;
     contain-intrinsic-size: auto 600px;
+  }
+
+  /* Per-reminder motion items: scope their layout/style/paint work so the
+     1-second countdown re-render of one RunningReminderItem doesn't
+     trigger a reflow of its siblings or parent. Without `contain`, each
+     re-render can cause the browser to re-compute layout for the whole
+     list, which is the main cause of "laggy when many reminders stacked"
+     feedback. `layout` + `style` + `paint` together create a strong
+     isolation boundary; `size` is intentionally NOT included because the
+     items grow/shrink when the progress bar widens. */
+  .reminder-item {
+    contain: layout style paint;
   }
 
   .overscroll-none {
