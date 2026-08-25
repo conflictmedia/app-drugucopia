@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0] - 2026-08-25
+
+### Added
+- Spinner wheel for selecting random substances from frequently used
+
+### Fixed
+- timeline dot was movin all over da place
+
 ## [0.3.9] - 2026-08-25
 
 ### Fixed
