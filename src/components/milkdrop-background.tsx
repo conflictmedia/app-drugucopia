@@ -132,8 +132,10 @@ interface MilkdropBackgroundProps {
 
 export function MilkdropBackground({ isDark }: MilkdropBackgroundProps) {
   const [useFallback, setUseFallback] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const animFrameRef = useRef<number>(0)
+
+  const [isMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth < 768,
+  )
   const startTimeRef = useRef<number>(0)
   const mouseRef = useRef<[number, number]>([0.5, 0.5])
   const intensityRef = useRef(1.0)
@@ -141,18 +143,28 @@ export function MilkdropBackground({ isDark }: MilkdropBackgroundProps) {
   const enabledRef = useRef(true)
   const isDarkRef = useRef(isDark ? 1.0 : 0.0)
   const targetIsDarkRef = useRef(isDark ? 1.0 : 0.0)
+  // Tab-visibility gate. When the document is hidden (background tab, screen
+  // locked, or Tauri window minimized), we cancel the RAF entirely instead
+  // of spinning it on a no-op. Saves continuous GPU + CPU usage while the
+  // user isn't looking at the page — significant on mobile / laptops.
+  const visibleRef = useRef(true)
+  const animFrameRef = useRef<number | null>(null)
 
-  const { enabled, intensity, preset } = useVisualizerStore()
-
-  useEffect(() => {
-    setIsMobile(window.innerWidth < 768)
-  }, [])
+  // Subscribe to the three slices individually so toggling `intensity` or
+  // `preset` doesn't re-render the component (which would tear down + rebuild
+  // the WebGL context because `enabled` is in the main effect's dep list).
+  // The values are mirrored into refs in the small subscription effect below.
+  const enabled = useVisualizerStore(s => s.enabled)
+  const intensity = useVisualizerStore(s => s.intensity)
+  const preset = useVisualizerStore(s => s.preset)
 
   useEffect(() => {
     enabledRef.current = enabled
     intensityRef.current = intensity
     presetRef.current = preset
   }, [enabled, intensity, preset])
+
+
 
   useEffect(() => {
     targetIsDarkRef.current = isDark ? 1.0 : 0.0
@@ -274,7 +286,13 @@ export function MilkdropBackground({ isDark }: MilkdropBackgroundProps) {
 
     // Render loop
     const render = () => {
-      if (!enabledRef.current) {
+      // Skip the WebGL draw call entirely when the tab is hidden or the
+      // visualizer is disabled. We still re-request the next frame so the
+      // loop resumes immediately when the user comes back or re-enables.
+      // (When disabled via the store, the effect below tears down the canvas
+      // shortly after, but cancelling the RAF here stops the GPU work right
+      // now instead of after the next effect cleanup.)
+      if (!enabledRef.current || !visibleRef.current) {
         animFrameRef.current = requestAnimationFrame(render)
         return
       }
@@ -298,10 +316,21 @@ export function MilkdropBackground({ isDark }: MilkdropBackgroundProps) {
 
     animFrameRef.current = requestAnimationFrame(render)
 
+    // Pause rendering when the tab becomes hidden — the browser also
+    // throttles requestAnimationFrame in background tabs to ~1fps or
+    // stops it entirely, but we still save the GPU work + power draw
+    // explicitly. Resumes on visibility change.
+    const onVisibility = () => {
+      visibleRef.current = !document.hidden
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    visibleRef.current = !document.hidden
+
     return () => {
-      cancelAnimationFrame(animFrameRef.current)
+      if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current)
       window.removeEventListener('resize', updateSize)
       window.removeEventListener('mousemove', onMouse)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (canvas.parentNode) canvas.parentNode.removeChild(canvas)
       gl.deleteProgram(program)
       gl.deleteShader(vert)

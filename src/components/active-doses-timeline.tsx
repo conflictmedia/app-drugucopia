@@ -1315,14 +1315,8 @@ export function ActiveDosesTimeline({ refreshTrigger }: ActiveDosesTimelineProps
                             cy={PT - 6}
                             r={NOW_INDICATOR.dotRadius}
                             fill={NOW_INDICATOR.color}
-                          >
-                            <animate
-                              attributeName="opacity"
-                              values="1;0.3;1"
-                              dur={`${NOW_INDICATOR.pulseDurationMs}ms`}
-                              repeatCount="indefinite"
-                            />
-                          </circle>
+                            className="now-pulse-opacity"
+                          />
                         </g>
                       )
                     })()}

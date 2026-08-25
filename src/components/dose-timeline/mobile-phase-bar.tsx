@@ -508,14 +508,8 @@ export function MobilePhaseBar({ group, className = '' }: MobilePhaseBarProps) {
                 cy={MOBILE_PT - 4}
                 r={NOW_INDICATOR.dotRadius}
                 fill={NOW_INDICATOR.color}
-              >
-                <animate
-                  attributeName="opacity"
-                  values="1;0.4;1"
-                  dur={`${NOW_INDICATOR.pulseDurationMs}ms`}
-                  repeatCount="indefinite"
-                />
-              </circle>
+                className="now-pulse-opacity"
+              />
             </g>
           )}
 

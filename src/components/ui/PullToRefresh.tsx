@@ -41,8 +41,11 @@ export function PullToRefresh({
   const containerRef = useRef<HTMLDivElement>(null)
   const startY = useRef<number | null>(null)
   const trackingPull = useRef(false)
+  const scrollParentRef = useRef<HTMLElement | null>(null)
   const [pullDistance, setPullDistance] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const rAFId = useRef<number | null>(null)
+  const pendingDistance = useRef(0)
 
   const triggerRefresh = useCallback(async () => {
     if (isRefreshing) return
@@ -68,8 +71,10 @@ export function PullToRefresh({
   const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     if (isRefreshing || event.touches.length !== 1) return
 
-    const scrollParent = findScrollParent(containerRef.current)
-    if (scrollParent && scrollParent.scrollTop > 0) return
+    // Cache scroll parent once per gesture (avoids getComputedStyle walk on every touchmove)
+    const parent = findScrollParent(containerRef.current)
+    scrollParentRef.current = parent ?? null
+    if (scrollParentRef.current && scrollParentRef.current.scrollTop > 0) return
 
     startY.current = event.touches[0].clientY
     trackingPull.current = true
@@ -78,10 +83,14 @@ export function PullToRefresh({
   const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     if (!trackingPull.current || startY.current === null || isRefreshing) return
 
-    const scrollParent = findScrollParent(containerRef.current)
+    const scrollParent = scrollParentRef.current
     if (scrollParent && scrollParent.scrollTop > 0) {
       trackingPull.current = false
       startY.current = null
+      if (rAFId.current !== null) {
+        cancelAnimationFrame(rAFId.current)
+        rAFId.current = null
+      }
       setPullDistance(0)
       return
     }
@@ -92,12 +101,24 @@ export function PullToRefresh({
       // Stop tracking it immediately and leave the browser in full control.
       trackingPull.current = false
       startY.current = null
+      if (rAFId.current !== null) {
+        cancelAnimationFrame(rAFId.current)
+        rAFId.current = null
+      }
       setPullDistance(0)
       return
     }
 
-    // Apply resistance so the indicator does not chase the finger one-to-one.
-    setPullDistance(Math.min(distance * 0.5, threshold * 1.5))
+    const newDistance = Math.min(distance * 0.5, threshold * 1.5)
+    // Throttle React re-renders to one per animation frame.
+    // Store latest distance in ref so only the most recent value applies.
+    pendingDistance.current = newDistance
+    if (rAFId.current === null) {
+      rAFId.current = requestAnimationFrame(() => {
+        rAFId.current = null
+        setPullDistance(pendingDistance.current)
+      })
+    }
   }
 
   const finishPull = () => {
@@ -106,6 +127,10 @@ export function PullToRefresh({
     const shouldRefresh = pullDistance >= threshold
     trackingPull.current = false
     startY.current = null
+    if (rAFId.current !== null) {
+      cancelAnimationFrame(rAFId.current)
+      rAFId.current = null
+    }
     setPullDistance(0)
 
     if (shouldRefresh) void triggerRefresh()

@@ -137,25 +137,12 @@ export function DoseMarker({
               fill="none"
               stroke={phaseColor}
               strokeWidth="2"
-              opacity="0"
-            >
-              <animate
-                attributeName="r"
-                from={radius}
-                to={radius + 20}
-                dur="1.2s"
-                begin={`${delay}s`}
-                repeatCount="1"
-              />
-              <animate
-                attributeName="opacity"
-                from="0.6"
-                to="0"
-                dur="1.2s"
-                begin={`${delay}s`}
-                repeatCount="1"
-              />
-            </circle>
+              opacity="0.6"
+              style={{
+                animation: `focus-flash 1.2s ease-out ${delay}s 1 forwards`,
+                transformOrigin: 'center center',
+              }}
+            />
           ))}
         </>
       )}
@@ -180,23 +167,12 @@ export function DoseMarker({
           fill="none"
           stroke={phaseColor}
           strokeWidth="1.5"
-          opacity="0"
-        >
-          <animate
-            attributeName="r"
-            from={radius}
-            to={radius + 12}
-            dur="2s"
-            repeatCount="indefinite"
-          />
-          <animate
-            attributeName="opacity"
-            from="0.5"
-            to="0"
-            dur="2s"
-            repeatCount="indefinite"
-          />
-        </circle>
+          opacity="0.5"
+          style={{
+            animation: 'ripple-expand 2s ease-out infinite',
+            transformOrigin: 'center center',
+          }}
+        />
       )}
 
       {/* ── Main marker dot ── */}

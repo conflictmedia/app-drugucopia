@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { memo } from 'react'
 import { Menu } from 'lucide-react'
 import { NAV_ITEMS, isNavItemActive } from './navigation'
 import { cn } from '@/lib/utils'
@@ -11,7 +12,11 @@ interface BottomNavProps {
   onMoreClick?: () => void
 }
 
-export function BottomNav({ onMoreClick }: BottomNavProps) {
+// BottomNav only depends on `pathname` (from usePathname) and the
+// `onMoreClick` prop. Memoizing it prevents LayoutClient re-renders
+// (e.g. doseLoggerOpen / favorite toggle / sync state change) from
+// cascading into a full re-render of the bottom nav + its 5 children.
+export const BottomNav = memo(function BottomNav({ onMoreClick }: BottomNavProps) {
   const pathname = usePathname()
 
   // Keep the four most-used destinations as primary tabs; everything
@@ -60,4 +65,4 @@ export function BottomNav({ onMoreClick }: BottomNavProps) {
       </button>
     </nav>
   )
-}
+})

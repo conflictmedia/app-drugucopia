@@ -4,7 +4,7 @@ import { Cloud, CloudOff, Loader2, Menu, Plus, AlertCircle } from 'lucide-react'
 import { useUIStore } from '@/store/ui-store'
 import { formatDistanceToNow } from 'date-fns'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { type MouseEvent, useEffect, useState } from 'react'
+import { memo, type MouseEvent, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useSync } from '@/contexts/sync-context'
@@ -40,7 +40,7 @@ function SyncStatusButton() {
           ? 'Sync error'
           : 'Sync off'
 
-return (
+  return (
     <Button
       type="button"
       variant="ghost"
@@ -70,7 +70,13 @@ return (
   )
 }
 
-export function TopBar({ onMenuClick }: TopBarProps) {
+// Memoized so LayoutClient re-renders don't cascade into TopBar's
+// children (SubstanceSearch, ThemeToggle, SyncStatusButton). Without
+// memo, every LayoutClient re-render (drawer open/close, doseLoggerOpen
+// toggle, favorite pin, etc.) would re-run getPageTitle, re-mount the
+// SubstanceSearch (via its pathname-based key), and re-render the
+// sync button + theme toggle.
+export const TopBar = memo(function TopBar({ onMenuClick }: TopBarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -155,4 +161,4 @@ export function TopBar({ onMenuClick }: TopBarProps) {
       </div>
     </header>
   )
-}
+})

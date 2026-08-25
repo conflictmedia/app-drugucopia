@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import { ChevronLeft, ChevronRight, Github } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-import { type MouseEvent } from 'react'
+import { memo, useCallback, type MouseEvent } from 'react'
 import { NAV_ITEMS, NAV_SECTIONS, isNavItemActive, type NavItem } from './navigation'
 import { cn } from '@/lib/utils'
 
@@ -34,19 +34,25 @@ const COLOR_CLASSES: Record<
   error: { active: 'text-error bg-error/10 ring-error/30', inactive: 'text-error/70' },
 }
 
-export function AppSidebar({ expanded, onNavigate, onToggle }: AppSidebarProps) {
+// Memoized so LayoutClient re-renders (drawer toggle, doseLoggerOpen toggle,
+// favorite pin, etc.) don't cascade into a full AppSidebar re-render. The
+// sidebar only depends on `expanded` and `onNavigate` / `onToggle` props,
+// plus `pathname` from usePathname (stable between route changes anyway).
+// Without memo, every LayoutClient re-render rebuilt all 7 NAV_SECTIONS,
+// re-filtered NAV_ITEMS, and re-rendered every nav button.
+export const AppSidebar = memo(function AppSidebar({ expanded, onNavigate, onToggle }: AppSidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
 
-  const navigate = (href: string) => {
+  const navigate = useCallback((href: string) => {
     onNavigate?.()
     router.push(href)
-  }
+  }, [onNavigate, router])
 
-  const handleBrandClick = (event: MouseEvent<HTMLButtonElement>) => {
+  const handleBrandClick = useCallback((event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     navigate('/')
-  }
+  }, [navigate])
 
   return (
     <aside
@@ -170,4 +176,4 @@ export function AppSidebar({ expanded, onNavigate, onToggle }: AppSidebarProps) 
       </div>
     </aside>
   )
-}
+})
