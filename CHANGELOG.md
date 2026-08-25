@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.9] - 2026-08-25
+
+### Fixed
+- some performance issues
+
 ## [0.3.8] - 2026-08-24
 
 ## Changed
