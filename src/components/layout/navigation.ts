@@ -3,6 +3,7 @@ import {
   Activity,
   BarChart3,
   Calculator,
+  Dices,
   FlaskConical,
   History,
   Leaf,
@@ -20,6 +21,7 @@ export interface NavItem {
     | "track"
     | "analytics"
     | "calculators"
+    | "spinner"
     | "custom-substances"
     | "safety"
     | "changelog"
@@ -85,6 +87,14 @@ export const NAV_ITEMS: NavItem[] = [
     icon: Calculator,
     section: "tools",
     color: "warning",
+  },
+  {
+    id: "spinner",
+    href: "/spinner-wheel",
+    label: "Spinner",
+    icon: Dices,
+    section: "tools",
+    color: "accent",
   },
   {
     id: "custom-substances",
@@ -154,6 +164,8 @@ export function isNavItemActive(item: NavItem, pathname: string) {
       return p.startsWith("/analytics");
     case "calculators":
       return p.startsWith("/calculators");
+    case "spinner":
+      return p.startsWith("/spinner-wheel");
     case "custom-substances":
       return p.startsWith("/custom-substances");
     case "medications":
@@ -183,6 +195,8 @@ export function getPageTitle(pathname: string) {
       return "Analytics";
     case "/calculators":
       return "Calculators";
+    case "/spinner-wheel":
+      return "Spinner Wheel";
     case "/custom-substances":
       return "Custom Substances";
     case "/medications":
