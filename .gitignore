@@ -57,9 +57,6 @@ yarn-error.log*
 .env*.local
 .env
 
-# vercel
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -69,4 +66,3 @@ dev.log
 test
 server.log
 
-# Skills directory (if any)
