@@ -47,7 +47,14 @@ import { useDoseStore } from '@/store/dose-store'
 import { useReminderStore } from '@/store/reminder-store'
 import { substances } from '@/lib/substances/index'
 import { classifyDose } from '@/lib/dose-classification'
-import { formatDoseAmount } from '@/lib/utils'
+import {
+  formatDoseAmount,
+} from '@/lib/utils'
+import {
+  readTimelineViewPreference,
+  writeTimelineViewPreference,
+  subscribeToTimelineViewChanges,
+} from '@/lib/timeline-view-preference'
 import { EstimatedDurationBadge } from '@/components/estimated-duration-badge'
 import {
   parseDurationToMinutes,
@@ -508,6 +515,22 @@ export function IntensityTimelineChart() {
   // a number, the chart clamps to [now - hours, now]. This lets users zoom
   // into recent activity instead of seeing a wide auto-fit window.
   const [windowHours, setWindowHours] = useState<WindowHours>(null)
+  // Layout option: 'cards' = one chart card per substance (original behavior),
+  // 'combined' = every active substance's intensity curve overlaid on ONE
+  // shared timeline. Persisted via the shared preference module so this view
+  // and the Settings page card ("Default timeline layout") stay in sync.
+  // The subscription below makes changes from Settings apply instantly, even
+  // while this chart is already mounted on /dose-log.
+  const [viewMode, setViewMode] = useState<'cards' | 'combined'>(
+    () => readTimelineViewPreference()
+  )
+  useEffect(() => {
+    writeTimelineViewPreference(viewMode)
+  }, [viewMode])
+  // Live-sync: Settings page (or another tab) changed the preference
+  useEffect(() =>
+    subscribeToTimelineViewChanges(mode => setViewMode(prev => (prev === mode ? prev : mode)))
+  , [])
   // Fix 3.2: nowTs is the ONLY thing that changes every 60s. It's passed down
   // as a prop so children can use it for the "now" line position and header
   // badges WITHOUT invalidating their memoized chart-data config.
@@ -638,9 +661,45 @@ export function IntensityTimelineChart() {
           <div />
         )}
 
-        {/* 2.1: Window zoom selector */}
-        <div className="flex items-center gap-0.5 bg-base-200 rounded-lg p-0.5 shrink-0">
-          {WINDOW_OPTIONS.map(opt => {
+        {/* Layout option toggle: per-substance cards vs one combined timeline.
+            Always shown so single-substance sessions can switch too. */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div
+            className="flex items-center gap-0.5 bg-base-200 rounded-lg p-0.5"
+            role="group"
+            aria-label="Timeline layout"
+          >
+            <button
+              onClick={() => setViewMode('cards')}
+              aria-pressed={viewMode === 'cards'}
+              title="One chart card per substance"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                viewMode === 'cards'
+                  ? 'bg-primary text-primary-content'
+                  : 'text-neutral-content hover:text-base-content hover:bg-base-300/50'
+              }`}
+            >
+              <Layers className="h-3 w-3" />
+              Cards
+            </button>
+            <button
+              onClick={() => setViewMode('combined')}
+              aria-pressed={viewMode === 'combined'}
+              title="All active substances on one timeline"
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all ${
+                viewMode === 'combined'
+                  ? 'bg-primary text-primary-content'
+                  : 'text-neutral-content hover:text-base-content hover:bg-base-300/50'
+              }`}
+            >
+              <Activity className="h-3 w-3" />
+              Combined
+            </button>
+          </div>
+
+          {/* 2.1: Window zoom selector */}
+          <div className="flex items-center gap-0.5 bg-base-200 rounded-lg p-0.5">
+            {WINDOW_OPTIONS.map(opt => {
             const isActive = windowHours === opt.hours
             return (
               <button
@@ -655,11 +714,21 @@ export function IntensityTimelineChart() {
               </button>
             )
           })}
+          </div>
         </div>
       </div>
 
-      {/* Per-substance chart cards */}
-      {visibleGroups.map(group => (
+      {/* Layout: combined overlay — every active substance on ONE timeline */}
+      {viewMode === 'combined' && (
+        <CombinedTimelineCard
+          groups={visibleGroups}
+          nowTs={nowTs}
+          windowHours={windowHours}
+        />
+      )}
+
+      {/* Per-substance chart cards (original layout) */}
+      {viewMode === 'cards' && visibleGroups.map(group => (
         <GroupCard
           key={group.key}
           group={group}
@@ -1712,3 +1781,590 @@ function ChartTooltip({ active, payload, label, series, windowStartMs, nowTs }: 
     </div>
   )
 }
+
+// ─── Combined timeline (all active substances on ONE chart) ────────────────
+
+/** Fallback hues used when two visible substances share the same primary
+ *  category (their category colors would be identical). Chosen so they don't
+ *  collide with any entry of CATEGORY_HEX_COLORS. */
+const EXTRA_SUBSTANCE_COLORS = [
+  '#f97316', // orange-500
+  '#0ea5e9', // sky-500
+  '#84cc16', // lime-500
+  '#d946ef', // fuchsia-500
+  '#2563eb', // blue-600
+  '#78716c', // stone-500
+]
+
+/**
+ * Give every visible substance a distinct curve color. First pass hands out
+ * each substance's semantic category color; if two substances share a
+ * category (identical hex), later ones pull unique fallbacks instead, so the
+ * overlay never renders two indistinguishable curves.
+ */
+function assignSubstanceColors(groups: SubstanceGroup[]): Map<string, string> {
+  const assigned = new Map<string, string>()
+  const claimed = new Set<string>()
+  // Pass 1: semantic category colors on a first-come basis
+  for (const g of groups) {
+    const c = categoryHexColor(g.categories)
+    if (!claimed.has(c)) {
+      assigned.set(g.key, c)
+      claimed.add(c)
+    }
+  }
+  // Pass 2: resolve collisions with fallback hues
+  let i = 0
+  for (const g of groups) {
+    if (assigned.has(g.key)) continue
+    let candidate = EXTRA_SUBSTANCE_COLORS[i % EXTRA_SUBSTANCE_COLORS.length]
+    while (claimed.has(candidate)) {
+      i++
+      candidate = EXTRA_SUBSTANCE_COLORS[i % EXTRA_SUBSTANCE_COLORS.length]
+    }
+    assigned.set(g.key, candidate)
+    claimed.add(candidate)
+  }
+  return assigned
+}
+
+/** One drawable curve in the combined view — a single dose, tagged with its
+ *  parent substance so the tooltip can aggregate per substance. */
+interface CombinedSeries {
+  dose: EnrichedDose
+  groupKey: string
+  substanceName: string
+  dataKey: string
+  color: { stroke: string; fill: string }
+}
+
+interface CombinedChartConfig {
+  data: ChartDataPoint[]
+  series: CombinedSeries[]
+  windowStartMs: number
+  windowEndMs: number
+}
+
+/** Merge every dose of every (visible) substance group into one sampled
+ *  chart config sharing a single time window.
+ *
+ *  Auto-fit window spans the earliest dose start (−5 min) to the latest dose
+ *  end (+10 min) across all groups; an explicit override clamps to the
+ *  user-selected sliding [now − hours, now] window, mirroring GroupCard.
+ *  Returns null when there is nothing to draw. */
+function buildCombinedChartConfig(
+  groups: SubstanceGroup[],
+  sampleCount: number,
+  windowOverride?: { startMs: number; endMs: number } | null,
+): CombinedChartConfig | null {
+  let windowStartMs: number
+  let windowEndMs: number
+
+  if (windowOverride) {
+    windowStartMs = windowOverride.startMs
+    windowEndMs = windowOverride.endMs
+  } else {
+    let minStart = Infinity
+    let maxEnd = -Infinity
+    for (const g of groups) {
+      for (const rg of g.routes) {
+        for (const d of rg.doses) {
+          minStart = Math.min(minStart, d.doseTime.getTime())
+          maxEnd = Math.max(maxEnd, d.doseTime.getTime() + d.timings.totalDuration * 60_000)
+        }
+      }
+    }
+    if (!isFinite(minStart) || !isFinite(maxEnd)) return null
+    windowStartMs = minStart - 5 * 60_000
+    windowEndMs = maxEnd + 10 * 60_000
+  }
+
+  const colors = assignSubstanceColors(groups)
+
+  // Flatten one series entry per dose across all groups. groupKey is baked
+  // into the dataKey so two doses logged at the exact same second (different
+  // substances) can never produce colliding keys.
+  const series: CombinedSeries[] = []
+  for (const g of groups) {
+    const stroke = colors.get(g.key) ?? '#a855f7'
+    for (const rg of g.routes) {
+      for (const d of rg.doses) {
+        series.push({
+          dose: d,
+          groupKey: g.key,
+          substanceName: g.substanceName,
+          dataKey: `dose_${g.key}_${String(d.id ?? d.doseTime.getTime())}`,
+          color: { stroke, fill: stroke },
+        })
+      }
+    }
+  }
+  if (series.length === 0) return null
+
+  const stepMs = (windowEndMs - windowStartMs) / sampleCount
+  const data: ChartDataPoint[] = []
+  for (let i = 0; i <= sampleCount; i++) {
+    const t = windowStartMs + i * stepMs
+    const point: ChartDataPoint = { t }
+    for (const s of series) point[s.dataKey] = scaledIntensityAt(s.dose, t)
+    data.push(point)
+  }
+
+  return { data, series, windowStartMs, windowEndMs }
+}
+
+// ─── Combined tooltip ───────────────────────────────────────────────────────
+
+interface CombinedChartTooltipProps {
+  active?: boolean
+  payload?: Array<{ dataKey: string; value: number }>
+  label?: number
+  series: CombinedSeries[]
+  nowTs: number
+}
+
+/** Hover tooltip for the combined timeline: absolute time, NOW badge, the
+ *  soft-stacked combined intensity across ALL substances, then one row per
+ *  substance (colored dot, name, current phase, intensity bar + %). */
+function CombinedChartTooltip({ active, payload, label, series, nowTs }: CombinedChartTooltipProps) {
+  if (!active || !payload || !label) return null
+  const t = label
+  const isNearNow = Math.abs(t - nowTs) < 3 * 60 * 1000
+
+  // Aggregate per substance — the strongest of its simultaneous doses drives
+  // the row's intensity & phase (mirrors the per-route logic in ChartTooltip).
+  interface SubstanceRow { name: string; color: string; intensity: number; phase: PhaseName; doseCount: number }
+  const bySubstance = new Map<string, SubstanceRow>()
+  for (const p of payload) {
+    if (p.value <= 0) continue
+    const s = series.find(x => x.dataKey === p.dataKey)
+    if (!s) continue
+    const elapsedMins = (t - s.dose.doseTime.getTime()) / 60_000
+    const progress = (elapsedMins / s.dose.timings.totalDuration) * 100
+    const phase = phaseNameAt(progress, s.dose.timings)
+    const prev = bySubstance.get(s.groupKey)
+    if (!prev) {
+      bySubstance.set(s.groupKey, {
+        name: s.substanceName, color: s.color.stroke,
+        intensity: p.value, phase, doseCount: 1,
+      })
+    } else {
+      prev.doseCount++
+      if (p.value > prev.intensity) {
+        prev.intensity = p.value
+        prev.phase = phase
+      }
+    }
+  }
+  if (bySubstance.size === 0) return null
+
+  const rows = Array.from(bySubstance.values()).sort((a, b) => b.intensity - a.intensity)
+  // Soft log-dampened stack across substances (Fix 1.1 model), displayed 0–100
+  const combinedDisplay = Math.min(100, Math.round(combinedIntensityAt(rows.map(r => r.intensity))))
+
+  return (
+    <div className="rounded-lg border border-neutral-500/25 bg-black/80 backdrop-blur-xl px-3 py-2.5 shadow-2xl min-w-[200px] max-w-[280px]" role="tooltip">
+      {/* Header: time + NOW badge */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-purple-300">All substances</span>
+        <div className="flex items-center gap-1.5">
+          {isNearNow && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded text-[9px] font-bold bg-rose-500/30 text-rose-300">
+              <span className="w-1 h-1 rounded-full bg-rose-400 animate-pulse" />
+              NOW
+            </span>
+          )}
+          <span className="text-[10px] text-neutral-300/70">{format(new Date(t), 'h:mm a')}</span>
+        </div>
+      </div>
+
+      {/* Combined intensity bar — capped at 100% */}
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-[10px] font-semibold text-neutral-300/60 w-20 shrink-0">Combined</span>
+        <div className="flex-1 h-2 bg-neutral-500/15 rounded-full overflow-hidden relative">
+          <div className="h-full rounded-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all" style={{ width: `${combinedDisplay}%` }} />
+        </div>
+        <span className="text-xs font-bold w-10 text-right text-purple-300">{combinedDisplay}%</span>
+      </div>
+
+      {/* Per-substance breakdown, strongest first */}
+      <div className="space-y-1">
+        {rows.map(row => (
+          <div key={row.name} className="flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: row.color }} />
+            <span className="text-[10px] font-medium text-neutral-200 truncate max-w-[70px]" title={row.name}>
+              {row.name}{row.doseCount > 1 && <span className="text-neutral-300/50"> ×{row.doseCount}</span>}
+            </span>
+            <span
+              className="text-[9px] shrink-0"
+              style={{ color: markerHex[row.phase] ?? '#a855f7' }}
+            >
+              {formatPhaseName(row.phase)}
+            </span>
+            <div className="flex-1 h-1.5 bg-neutral-500/15 rounded-full overflow-hidden">
+              <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, Math.round(row.intensity))}%`, backgroundColor: row.color }} />
+            </div>
+            <span className="text-[10px] w-8 text-right text-neutral-300/80">{Math.round(row.intensity)}%</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Time-in summary */}
+      <div className="mt-2 pt-1.5 border-t border-neutral-500/20 flex items-baseline gap-2">
+        <span className="text-base font-bold text-neutral-200">{combinedDisplay}%</span>
+        <span className="text-[10px] text-neutral-300/60">combined intensity</span>
+      </div>
+    </div>
+  )
+}
+
+// ─── Combined timeline card ─────────────────────────────────────────────────
+
+interface CombinedTimelineCardProps {
+  /** Already filtered for hidden substances by the parent toolbar chips */
+  groups: SubstanceGroup[]
+  nowTs: number
+  windowHours: WindowHours
+}
+
+/**
+ * Every active substance's intensity curves overlaid on a single shared
+ * Recharts timeline. Curves are colored per substance (unique hue even when
+ * categories repeat), faded/dashed once ended, with night bands, a pulsing
+ * NOW line, per-dose start markers along the base, and a substance-aggregating
+ * tooltip with the soft-stacked combined intensity.
+ */
+const CombinedTimelineCard = memo(function CombinedTimelineCard({ groups, nowTs, windowHours }: CombinedTimelineCardProps) {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches,
+  )
+  // mounted gate — avoids the ResponsiveContainer 0×0 warning on first paint
+  const [mounted, setMounted] = useState(false)
+  const [touchScrolling, setTouchScrolling] = useState(false)
+  const touchScrollTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 767px)')
+    const onChange = (event: MediaQueryListEvent) => setIsMobile(event.matches)
+    const frame = requestAnimationFrame(() => setMounted(true))
+    media.addEventListener('change', onChange)
+    return () => {
+      cancelAnimationFrame(frame)
+      media.removeEventListener('change', onChange)
+    }
+  }, [])
+
+  // Sliding zoom window derived from the parent's minute tick (no extra interval)
+  const windowOverride = useMemo(() => windowHours === null ? null : ({
+    startMs: nowTs - windowHours * 60 * 60 * 1000,
+    endMs: nowTs,
+  }), [nowTs, windowHours])
+
+  // A long shared window benefits from denser sampling than single cards
+  const sampleCount = isMobile ? 48 : 120
+
+  // NOTE: hooks must run unconditionally — config may legitimately be null
+  // (e.g. zoom window far from any dose), handled at render time below.
+  const config = useMemo(
+    () => buildCombinedChartConfig(groups, sampleCount, windowOverride),
+    [groups, sampleCount, windowOverride],
+  )
+
+  // Total substances/dose counts for the header badges
+  const totals = useMemo(() => {
+    if (!config) return { substances: 0, doses: 0 }
+    return {
+      substances: new Set(config.series.map(s => s.groupKey)).size,
+      doses: config.series.length,
+    }
+  }, [config])
+
+  // Combined intensity RIGHT NOW across every substance (soft-stacked),
+  // shown in the header badge; null when nothing is currently active.
+  const combinedNow = useMemo(() => {
+    if (!config) return null
+    const activeIntensities = config.series
+      .filter(s => {
+        const elapsed = (nowTs - s.dose.doseTime.getTime()) / 60_000
+        return elapsed >= 0 && elapsed < s.dose.timings.offsetEnd
+      })
+      .map(s => scaledIntensityAt(s.dose, nowTs))
+    if (activeIntensities.length === 0) return null
+    return Math.min(100, Math.round(combinedIntensityAt(activeIntensities)))
+  }, [config, nowTs])
+
+  // Time until EVERY curve finishes (max offset-end across all doses)
+  const allEndedRemaining = useMemo(() => {
+    if (!config) return null
+    let maxEnd = -Infinity
+    for (const s of config.series) {
+      maxEnd = Math.max(maxEnd, s.dose.doseTime.getTime() + s.dose.timings.offsetEnd * 60_000)
+    }
+    const remaining = (maxEnd - nowTs) / 60_000
+    return remaining > 0 ? remaining : 0
+  }, [config, nowTs])
+
+  // 2.5: night-hour background bands (10pm–6am) within the shared window
+  const nightBands = useMemo(() => {
+    if (!config) return []
+    const bands: Array<{ startMs: number; endMs: number }> = []
+    const start = new Date(config.windowStartMs)
+    const end = new Date(config.windowEndMs)
+    const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+    while (cursor.getTime() < end.getTime()) {
+      const nightStart = new Date(cursor)
+      nightStart.setHours(22, 0, 0, 0)
+      const nightEnd = new Date(cursor)
+      nightEnd.setDate(nightEnd.getDate() + 1)
+      nightEnd.setHours(6, 0, 0, 0)
+      const ms1 = Math.max(nightStart.getTime(), config.windowStartMs)
+      const ms2 = Math.min(nightEnd.getTime(), config.windowEndMs)
+      if (ms1 < ms2) bands.push({ startMs: ms1, endMs: ms2 })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return bands
+  }, [config])
+
+  if (!config || config.series.length === 0) return null
+
+  const chartHeight = isMobile ? 220 : 300
+
+  return (
+    <Card className="chart-container" data-group-key="combined">
+      <CardHeader className="pb-2">
+        {/* Header row */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-base flex items-center gap-1.5">
+              <Activity className="h-4 w-4 text-purple-500" />
+              Combined Timeline
+            </h3>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {totals.substances} substance{totals.substances !== 1 ? 's' : ''} · {totals.doses} dose{totals.doses !== 1 ? 's' : ''}
+            </Badge>
+            {combinedNow !== null && (
+              <Badge variant="outline" className="text-xs font-mono">
+                <Activity className="h-3 w-3 mr-1 text-purple-400" />
+                {combinedNow}%
+              </Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {allEndedRemaining !== null && allEndedRemaining > 0 && (
+              <span className="text-xs text-neutral-content flex items-center gap-1">
+                <Timer className="h-3 w-3" />
+                all clear in {formatMinutes(allEndedRemaining)}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Substance legend — informative twin of the toolbar toggle chips */}
+        <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+          {Array.from(new Map(config.series.map(s => [s.groupKey, s])).values()).map(s => (
+            <span
+              key={s.groupKey}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border"
+              style={{ borderColor: s.color.stroke, color: s.color.stroke }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: s.color.fill }} />
+              {s.substanceName}
+            </span>
+          ))}
+        </div>
+      </CardHeader>
+
+      <CardContent className="pt-0">
+        <div className="relative">
+          {/* Dose start markers — triangles at the base, colored per substance */}
+          {mounted && config.series.map(s => {
+            const doseStartMs = s.dose.doseTime.getTime()
+            if (doseStartMs < config.windowStartMs || doseStartMs > config.windowEndMs) return null
+            const pct = ((doseStartMs - config.windowStartMs) / (config.windowEndMs - config.windowStartMs)) * 100
+            const fmtAmt = formatDoseAmount(s.dose.amount, s.dose.unit)
+            return (
+              <div
+                key={`dose-marker-${s.dataKey}`}
+                className="absolute pointer-events-none z-10"
+                style={{
+                  left: `calc(20px + ${pct / 100} * (100% - 28px))`,
+                  bottom: 0,
+                  transform: 'translateX(-50%)',
+                }}
+                title={`${s.substanceName} ${fmtAmt.amount}${fmtAmt.unit} · ${format(new Date(doseStartMs), 'h:mm a')}`}
+              >
+                <div
+                  className="w-0 h-0"
+                  style={{
+                    borderLeft: '4px solid transparent',
+                    borderRight: '4px solid transparent',
+                    borderTop: `5px solid ${s.color.stroke}`,
+                    opacity: 0.8,
+                  }}
+                />
+              </div>
+            )
+          })}
+
+          {/* Chart — touch-scroll suppression prevents tooltip storms on mobile */}
+          <div
+            style={{ width: '100%', height: chartHeight }}
+            role="application"
+            aria-label={`Combined intensity timeline for all active substances. Hover or touch to inspect per-substance intensity.`}
+            onTouchStart={() => {
+              setTouchScrolling(true)
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+            }}
+            onTouchMove={() => {
+              setTouchScrolling(true)
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+              touchScrollTimer.current = window.setTimeout(() => {
+                setTouchScrolling(false)
+                touchScrollTimer.current = null
+              }, 400)
+            }}
+            onTouchEnd={() => {
+              if (touchScrollTimer.current) clearTimeout(touchScrollTimer.current)
+              touchScrollTimer.current = window.setTimeout(() => {
+                setTouchScrolling(false)
+                touchScrollTimer.current = null
+              }, 300)
+            }}
+          >
+            {mounted ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={config.data} margin={{ top: 4, right: 8, left: -12, bottom: 4 }}>
+                  <defs>
+                    {config.series.map((s, i) => (
+                      <linearGradient key={`grad-${i}`} id={`grad-combined-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={s.color.fill} stopOpacity={0.25} />
+                        <stop offset="100%" stopColor={s.color.fill} stopOpacity={0.02} />
+                      </linearGradient>
+                    ))}
+                    <linearGradient id="bg-grad-combined" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="rgba(255,255,255,0.02)" />
+                      <stop offset="100%" stopColor="rgba(0,0,0,0.15)" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* Background fill */}
+                  <rect x={0} y={0} width="100%" height="100%" fill="url(#bg-grad-combined)" fillOpacity={0.5} />
+
+                  {/* Night-hour bands give temporal context across substances */}
+                  {nightBands.map((nb, i) => (
+                    <ReferenceArea
+                      key={`night-${i}`}
+                      x1={nb.startMs}
+                      x2={nb.endMs}
+                      strokeOpacity={0}
+                      fill="#1e293b"
+                      fillOpacity={0.15}
+                    />
+                  ))}
+
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                  <XAxis
+                    dataKey="t"
+                    type="number"
+                    domain={[config.windowStartMs, config.windowEndMs]}
+                    scale="time"
+                    tick={{ fontSize: 10, fill: 'currentColor' }}
+                    stroke="currentColor"
+                    tickFormatter={(ts) => format(new Date(ts), 'h:mm a')}
+                    minTickGap={40}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fontSize: 10, fill: 'currentColor' }}
+                    stroke="currentColor"
+                    width={32}
+                    tickFormatter={(v) => `${v}%`}
+                    label={{ value: 'Intensity', angle: -90, position: 'insideLeft', fontSize: 9, fill: 'currentColor', opacity: 0.6, dy: 20 }}
+                  />
+                  {!touchScrolling && (
+                    <Tooltip
+                      content={<CombinedChartTooltip series={config.series} nowTs={nowTs} />}
+                      cursor={{ stroke: 'rgba(255,255,255,0.3)', strokeWidth: 1, strokeDasharray: '4 4' }}
+                    />
+                  )}
+
+                  {/* Pulsing NOW indicator — same treatment as per-substance cards */}
+                  {nowTs >= config.windowStartMs && nowTs <= config.windowEndMs && (
+                    <ReferenceLine
+                      x={nowTs}
+                      stroke={NOW_INDICATOR.color}
+                      strokeWidth={NOW_INDICATOR.strokeWidth}
+                      strokeDasharray={NOW_INDICATOR.dashArray}
+                      label={(props: { viewBox?: { x?: number; y?: number } }) => {
+                        const cx = props.viewBox?.x ?? 0
+                        const cy = 4
+                        return (
+                          <g>
+                            <text
+                              x={cx}
+                              y={cy - 6}
+                              textAnchor="middle"
+                              fontSize={8}
+                              fill={NOW_INDICATOR.color}
+                              opacity={0.8}
+                            >
+                              NOW
+                            </text>
+                            <circle
+                              cx={cx}
+                              cy={cy}
+                              r={NOW_INDICATOR.dotRadius}
+                              fill={NOW_INDICATOR.color}
+                              className="now-pulse-opacity now-pulse-scale"
+                            />
+                          </g>
+                        )
+                      }}
+                    />
+                  )}
+
+                  {/* One Area per dose — stroke/fill keyed to the SUBSTANCE's
+                      color so its multiple redoses read as a family. Ended
+                      doses dash + fade without resampling (mirrors cards). */}
+                  {config.series.map((s, i) => {
+                    const doseEnded = (nowTs - s.dose.doseTime.getTime()) / 60_000 >= s.dose.timings.offsetEnd
+                    return (
+                      <Area
+                        key={s.dataKey}
+                        type="monotone"
+                        dataKey={s.dataKey}
+                        stroke={s.color.stroke}
+                        strokeWidth={doseEnded ? 1.5 : 2}
+                        strokeDasharray={doseEnded ? '4 4' : undefined}
+                        fill={`url(#grad-combined-${i})`}
+                        opacity={doseEnded ? 0.35 : 1}
+                        isAnimationActive={false}
+                        connectNulls
+                        dot={false}
+                        activeDot={false}
+                      />
+                    )
+                  })}
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : null}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between text-[10px] text-neutral-content mt-2 gap-2 flex-wrap">
+          <span>
+            Overlapping phases across substances contribute to the combined value · use the chips above to hide/show
+          </span>
+          <button
+            onClick={() => exportChartPng('combined', 'combined')}
+            className="flex items-center gap-1 hover:text-base-content transition-colors shrink-0"
+            title="Download combined chart as PNG"
+          >
+            <Download className="h-3 w-3" />
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+})

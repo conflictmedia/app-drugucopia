@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.0] - 2026-08-27
+
+### Added
+- Combined view timeline, enable it in settings or by selecting the option manually on the timeline view
+
 ## [0.4.0] - 2026-08-25
 
 ### Added
