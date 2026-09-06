@@ -624,6 +624,23 @@ EOF
 }
 install_kotlin_helpers
 
+# ── Ensure Android Auto Backup is disabled on the generated manifest ──────
+# The webview localStorage holds plaintext dose history and sync credentials;
+# Auto Backup would upload them to the user's Google Drive. patch-android.sh
+# sets this on fresh inits, but the full patch is skipped on existing trees,
+# so enforce it here on every build.
+ensure_allow_backup() {
+  local manifest="$GEN_ANDROID_DIR/app/src/main/AndroidManifest.xml"
+  [ -f "$manifest" ] || die "AndroidManifest.xml not found at $manifest"
+  if ! grep -q "android:allowBackup" "$manifest"; then
+    sed -i 's/<application/<application\n        android:allowBackup="false"/' "$manifest"
+    ok "Disabled Android Auto Backup (android:allowBackup=\"false\")"
+  else
+    ok "android:allowBackup already configured"
+  fi
+}
+ensure_allow_backup
+
 verify_release_apk_helpers() {
   local apk dex_dump found=0
   while IFS= read -r apk; do

@@ -11,6 +11,87 @@
 /// the browser Notification API).
 use tauri::command;
 
+/// Load an app-defined Kotlin helper class through the Activity's application
+/// class loader.
+///
+/// `JNIEnv::find_class` is unreliable from a native-attached Android thread —
+/// it can resolve against the bootstrap class loader and miss app classes —
+/// and hardcoding an applicationId breaks whichever build (dev/release) the
+/// literal doesn't match. Derive the package from the running APK at runtime
+/// instead (same fix as `downloads.rs`).
+#[cfg(target_os = "android")]
+fn load_android_class<'local>(
+    env: &mut jni::JNIEnv<'local>,
+    activity: &jni::objects::JObject<'_>,
+    simple_name: &str,
+) -> Result<jni::objects::JClass<'local>, String> {
+    let package_value = match env.call_method(
+        activity,
+        "getPackageName",
+        "()Ljava/lang/String;",
+        &[],
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("getPackageName: {e:?}"));
+        }
+    };
+    let package_obj = match package_value.l() {
+        Ok(o) if !o.is_null() => o,
+        Ok(_) => return Err("getPackageName returned null".into()),
+        Err(e) => return Err(format!("getPackageName value: {e:?}")),
+    };
+    let package_jstr: jni::objects::JString = package_obj.into();
+    let package: String = match env.get_string(&package_jstr) {
+        Ok(s) => s.into(),
+        Err(e) => return Err(format!("read package name: {e:?}")),
+    };
+
+    let loader_value = match env.call_method(
+        activity,
+        "getClassLoader",
+        "()Ljava/lang/ClassLoader;",
+        &[],
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = env.exception_clear();
+            return Err(format!("getClassLoader: {e:?}"));
+        }
+    };
+    let loader = match loader_value.l() {
+        Ok(o) if !o.is_null() => o,
+        Ok(_) => return Err("getClassLoader returned null".into()),
+        Err(e) => return Err(format!("getClassLoader value: {e:?}")),
+    };
+
+    let helper_name = format!("{package}.{simple_name}");
+    let j_helper_name = match env.new_string(&helper_name) {
+        Ok(s) => s,
+        Err(e) => return Err(format!("new_string {helper_name}: {e:?}")),
+    };
+    let class_value = match env.call_method(
+        &loader,
+        "loadClass",
+        "(Ljava/lang/String;)Ljava/lang/Class;",
+        &[jni::objects::JValue::Object(&j_helper_name)],
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+            return Err(format!("loadClass {helper_name}: {e:?}"));
+        }
+    };
+    let class_obj = match class_value.l() {
+        Ok(o) if !o.is_null() => o,
+        Ok(_) => return Err(format!("loadClass returned null for {helper_name}")),
+        Err(e) => return Err(format!("loadClass value {helper_name}: {e:?}")),
+    };
+    Ok(class_obj.into())
+}
+
 /// Show (or update) an ongoing timeline notification.
 ///
 /// NOTE: This is a **synchronous** Tauri command (not async) to avoid
@@ -66,13 +147,11 @@ pub fn show_ongoing_notification(
                     };
 
                     // Find helper class
-                    let class = match env.find_class("com/drugucopiadev/app/OngoingNotificationHelper")
+                    let class = match load_android_class(env, activity, "OngoingNotificationHelper")
                     {
                         Ok(c) => c,
                         Err(e) => {
-                            // clear exception if find_class threw
-                            let _ = env.exception_clear();
-                            return Err(format!("find_class: {e:?}"));
+                            return Err(format!("find_class: {e}"));
                         }
                     };
 
@@ -170,12 +249,11 @@ pub fn cancel_ongoing_notification(app: tauri::AppHandle, id: i32) -> Result<(),
                 let result: Result<(), String> = (|| {
                     use jni::objects::JValue;
 
-                    let class = match env.find_class("com/drugucopiadev/app/OngoingNotificationHelper")
+                    let class = match load_android_class(env, activity, "OngoingNotificationHelper")
                     {
                         Ok(c) => c,
                         Err(e) => {
-                            let _ = env.exception_clear();
-                            return Err(format!("find_class cancel: {e:?}"));
+                            return Err(format!("find_class cancel: {e}"));
                         }
                     };
 

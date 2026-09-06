@@ -27,8 +27,11 @@ async function initHaptics(): Promise<void> {
       // Only load on client side
       if (typeof window === 'undefined') return
 
-      // Check if Tauri is available
-      const isTauri = '__TAURI__' in window
+      // Check if Tauri is available. Tauri v2 builds run with
+      // withGlobalTauri=false, so only __TAURI_INTERNALS__ exists on window —
+      // the '__TAURI__' check previously used never matched and haptics were
+      // permanently a no-op. (tauri-bridge.ts uses the same check.)
+      const isTauri = '__TAURI_INTERNALS__' in window
 
       if (!isTauri) {
         // Not in Tauri - create no-op module
@@ -44,14 +47,20 @@ async function initHaptics(): Promise<void> {
       const { impactFeedback, notificationFeedback, selectionFeedback } =
         await import('@tauri-apps/plugin-haptics')
 
+      // Fire-and-forget: a rejected invoke (permission gap, plugin
+      // unavailable mid-session) must surface as silence, never as an
+      // unhandled rejection in whatever UI action triggered the buzz.
+      const settle = (p: Promise<unknown>): Promise<void> =>
+        p.then(() => undefined, () => undefined)
+
       hapticsModule = {
-        light: () => impactFeedback('light').then(() => undefined),
-        medium: () => impactFeedback('medium').then(() => undefined),
-        heavy: () => impactFeedback('heavy').then(() => undefined),
-        selection: () => selectionFeedback().then(() => undefined),
-        success: () => notificationFeedback('success').then(() => undefined),
-        warning: () => notificationFeedback('warning').then(() => undefined),
-        error: () => notificationFeedback('error').then(() => undefined),
+        light: () => settle(impactFeedback('light')),
+        medium: () => settle(impactFeedback('medium')),
+        heavy: () => settle(impactFeedback('heavy')),
+        selection: () => settle(selectionFeedback()),
+        success: () => settle(notificationFeedback('success')),
+        warning: () => settle(notificationFeedback('warning')),
+        error: () => settle(notificationFeedback('error')),
         isAvailable: async () => true,
       }
 

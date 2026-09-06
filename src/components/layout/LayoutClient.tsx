@@ -2,6 +2,7 @@
 
 import { AlertTriangle } from 'lucide-react'
 import { useState, useEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { AppSidebar } from './AppSidebar'
 import { TopBar } from './TopBar'
@@ -14,6 +15,7 @@ import { ReminderProvider } from '@/components/reminder-provider'
 import { CommandPalette } from '@/components/command-palette'
 import { OnboardingTour } from '@/components/onboarding-tour'
 import { UpdateCheckPopupWrapper } from '@/components/update-check-popup-wrapper'
+import { ErrorBoundary } from '@/components/error-boundary'
 import { useUIStore } from '@/store/ui-store'
 
 // Keep the logger out of the shell while closed. The module is warmed during
@@ -28,6 +30,7 @@ interface LayoutClientProps {
 const DRAWER_ID = 'app-shell-drawer'
 
 export function LayoutClient({ children }: LayoutClientProps) {
+  const pathname = usePathname()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false
@@ -184,7 +187,12 @@ export function LayoutClient({ children }: LayoutClientProps) {
                 />
 
                 <main className="relative flex-1 overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+64px)]">
-                  {children}
+                  {/* Keyed by pathname: an error in one page shows the
+                      fallback, and simply navigating away remounts a fresh
+                      boundary instead of being stuck in the error state. */}
+                  <ErrorBoundary key={pathname} name="Page">
+                    {children}
+                  </ErrorBoundary>
                 </main>
 
                 <BottomNav onMoreClick={() => setDrawerOpen(true)} />
@@ -221,7 +229,9 @@ export function LayoutClient({ children }: LayoutClientProps) {
                   onMenuClick={() => setDrawerOpen(true)}
                 />
                 <main className="relative flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">
-                  {children}
+                  <ErrorBoundary key={pathname} name="Page">
+                    {children}
+                  </ErrorBoundary>
                 </main>
               </div>
             </div>

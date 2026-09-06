@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
+import { toast } from "@/hooks/use-toast";
 import { DoseLog } from "../types";
 import { useReminderStore } from "./reminder-store";
 
@@ -67,7 +68,16 @@ function writeDosesToStorage(doses: DoseLog[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(doses));
   } catch (e) {
+    // Quota failures were previously only logged — the UI believed the dose
+    // was saved when it wasn't. Tell the user so they can export/trim before
+    // anything is actually lost.
     console.error("Failed to persist doses to localStorage", e);
+    toast({
+      variant: "destructive",
+      title: "Couldn't save dose history to device storage",
+      description:
+        "Storage may be full. Export your history from Dose History → Export, then remove old entries.",
+    });
   }
 }
 

@@ -267,6 +267,18 @@ if [ -f "$MANIFEST" ]; then
     sed -i 's/<application/<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" \/>\n    <application/' "$MANIFEST"
     ok "Added legacy storage permission"
   fi
+
+  # ─── 1c. Disable Android Auto Backup ──────────────────────────────────────
+  # The webview localStorage holds the dose history and sync credentials in
+  # plaintext. With Auto Backup enabled (the default), Android uploads that
+  # data to the user's Google Drive — unacceptable for a harm-reduction app.
+  if ! grep -q "android:allowBackup" "$MANIFEST"; then
+    info "Disabling Android Auto Backup (allowBackup=false)"
+    sed -i 's/<application/<application\n        android:allowBackup="false"/' "$MANIFEST"
+    ok "Added android:allowBackup=\"false\""
+  else
+    ok "android:allowBackup already configured"
+  fi
 fi
 
 # ─── 2. Patch AndroidManifest.xml for status bar color ────────────────────────

@@ -5,6 +5,7 @@ import "./globals.css";
 import { LayoutClient } from "@/components/layout/LayoutClient";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ChangelogPopupWrapper } from "@/components/changelog-popup-wrapper";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 const ibmPlexSans = IBM_Plex_Sans({
   variable: "--font-ibm-plex-sans",
@@ -62,10 +63,16 @@ export default function RootLayout({
         className={`${ibmPlexSans.className} ${ibmPlexMono.className} antialiased text-base-content`}
       >
         <ThemeProvider>
-          <LayoutClient>
-            {children}
-          </LayoutClient>
-          <ChangelogPopupWrapper />
+          {/* Last-resort boundary: catches crashes in the layout shell itself
+              (TopBar, sidebar, providers). Page-level crashes are caught by
+              the finer-grained boundary inside LayoutClient's <main>, which
+              keeps the navigation shell alive. */}
+          <ErrorBoundary name="Drugucopia">
+            <LayoutClient>
+              {children}
+            </LayoutClient>
+            <ChangelogPopupWrapper />
+          </ErrorBoundary>
         </ThemeProvider>
       </body>
     </html>

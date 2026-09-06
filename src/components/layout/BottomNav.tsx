@@ -25,8 +25,12 @@ export const BottomNav = memo(function BottomNav({ onMoreClick }: BottomNavProps
   const bottomNavIds = ['library', 'track', 'analytics', 'safety'] as const
 
   return (
+    // Visibility/display is owned entirely by `.mobile-nav` in globals.css.
+    // Do NOT add Tailwind display utilities (`hidden md:flex` etc.) — they
+    // land earlier in the same cascade layer and are silently overridden,
+    // which makes them look meaningful while doing nothing.
     <nav
-      className="mobile-nav hidden md:flex"
+      className="mobile-nav"
       role="navigation"
       aria-label="Main navigation"
     >

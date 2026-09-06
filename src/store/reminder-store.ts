@@ -54,20 +54,39 @@ interface ReminderState {
   ) => void
 }
 
+// Every persist helper swallows quota errors: these were previously unguarded
+// localStorage.setItem calls, so a full storage area threw from inside a
+// zustand set() updater and crashed whatever user action triggered the write.
 function persistSchedules(schedules: ReminderSchedule[]) {
-  localStorage.setItem(SCHEDULES_KEY, JSON.stringify(schedules))
+  try {
+    localStorage.setItem(SCHEDULES_KEY, JSON.stringify(schedules))
+  } catch (e) {
+    console.error('Failed to persist reminder schedules', e)
+  }
 }
 
 function persistActive(active: ActiveReminder[]) {
-  localStorage.setItem(ACTIVE_KEY, JSON.stringify(active))
+  try {
+    localStorage.setItem(ACTIVE_KEY, JSON.stringify(active))
+  } catch (e) {
+    console.error('Failed to persist active reminders', e)
+  }
 }
 
 function persistSettings(settings: ReminderSettings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings))
+  } catch (e) {
+    console.error('Failed to persist reminder settings', e)
+  }
 }
 
 function persistDeletedScheduleIds(deleted: Set<string>) {
-  localStorage.setItem(DELETED_SCHEDULES_KEY, JSON.stringify([...deleted]))
+  try {
+    localStorage.setItem(DELETED_SCHEDULES_KEY, JSON.stringify([...deleted]))
+  } catch (e) {
+    console.error('Failed to persist deleted schedule ids', e)
+  }
 }
 
 export const useReminderStore = create<ReminderState>((set, get) => ({
