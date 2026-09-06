@@ -16,6 +16,7 @@ import { CommandPalette } from '@/components/command-palette'
 import { OnboardingTour } from '@/components/onboarding-tour'
 import { UpdateCheckPopupWrapper } from '@/components/update-check-popup-wrapper'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { useBackClose } from '@/hooks/use-back-close'
 import { useUIStore } from '@/store/ui-store'
 
 // Keep the logger out of the shell while closed. The module is warmed during
@@ -108,40 +109,40 @@ export function LayoutClient({ children }: LayoutClientProps) {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  // ── Android back button: close drawer / dose logger when open ──
+  // ── Soft-keyboard height → --kb-height CSS variable ──
+  // With enableEdgeToEdge the Android WebView does not resize for the
+  // keyboard, so fixed bottom-anchored surfaces (bottom sheets, modal
+  // footers) would sit underneath it. visualViewport.height shrinks by
+  // exactly the occluded height in that mode. When the window DOES resize
+  // (adjustResize), innerHeight shrinks with it and the measured gap is 0 —
+  // so surfaces never double-compensate, whichever mode the device uses.
   useEffect(() => {
-    const handlePopState = () => {
-      // If the drawer is open, close it and consume the back navigation
-      if (drawerOpen) {
-        setDrawerOpen(false)
-        return
-      }
-      // If the dose logger modal is open, close it
-      if (doseLoggerOpen) {
-        closeDoseLogger()
-        return
-      }
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => {
+      const kb = Math.max(0, window.innerHeight - vv.height)
+      document.documentElement.style.setProperty('--kb-height', `${Math.round(kb)}px`)
     }
-
-    // Push a history entry when the drawer/modal opens so the back
-    // button has something to pop. When it closes, we don't push.
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [drawerOpen, doseLoggerOpen, closeDoseLogger])
-
-  // Push a history entry when drawer opens (so Android back can pop it)
-  useEffect(() => {
-    if (drawerOpen) {
-      window.history.pushState({ drawerOpen: true }, '')
+    update()
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    return () => {
+      vv.removeEventListener('resize', update)
+      vv.removeEventListener('scroll', update)
+      document.documentElement.style.setProperty('--kb-height', '0px')
     }
-  }, [drawerOpen])
+  }, [])
 
-  // Push a history entry when dose logger opens
-  useEffect(() => {
-    if (doseLoggerOpen) {
-      window.history.pushState({ doseLoggerOpen: true }, '')
-    }
-  }, [doseLoggerOpen])
+  // ── Android back button: close drawer / dose logger / onboarding tour ──
+  // Each surface pushes its own history entry when opened (useBackClose),
+  // so back dismisses topmost-first and closing via the UI pops the entry
+  // instead of leaving stale ones that swallow later back presses.
+  useBackClose(drawerOpen, () => setDrawerOpen(false))
+  useBackClose(doseLoggerOpen, closeDoseLogger)
+  useBackClose(showOnboarding, () => {
+    setShowOnboarding(false)
+    setOnboardingCompleted(true)
+  })
 
   if (!mounted) {
     return (

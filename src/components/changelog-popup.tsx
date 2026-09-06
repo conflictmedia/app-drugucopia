@@ -5,6 +5,7 @@ import { X, Sparkles, Github } from 'lucide-react'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import { cn } from '@/lib/utils'
+import { useBackClose } from '@/hooks/use-back-close'
 
 const STORAGE_KEY = 'drugucopia-last-seen-version'
 
@@ -39,6 +40,10 @@ export function ChangelogPopup({ version, changelog }: ChangelogPopupProps) {
     setIsOpen(false)
     setLastSeenVersion(version)
   }
+
+  // This component stays mounted for the whole session, so the Android back
+  // button can dismiss the popup (and mark the version as seen).
+  useBackClose(isOpen, handleClose)
 
   if (!mounted || !isOpen) return null
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { Cloud, CloudOff, Loader2, Menu, Plus, AlertCircle } from 'lucide-react'
+import { Cloud, CloudOff, Loader2, Menu, Plus, AlertCircle, Search } from 'lucide-react'
 import { useUIStore } from '@/store/ui-store'
 import { formatDistanceToNow } from 'date-fns'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
@@ -83,6 +83,7 @@ export const TopBar = memo(function TopBar({ onMenuClick }: TopBarProps) {
   const queryParam = searchParams.get('q') ?? ''
   const title = getPageTitle(pathname)
   const openDoseLogger = useUIStore((state) => state.openDoseLogger)
+  const openCommandPalette = useUIStore((state) => state.openCommandPalette)
 
   const handleDoseLogClick = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -135,6 +136,20 @@ export const TopBar = memo(function TopBar({ onMenuClick }: TopBarProps) {
         </div>
 
         <div className="navbar-end gap-1 sm:gap-2">
+          {/* Quick actions (command palette). Mobile-only launcher — on
+              desktop the palette opens with Ctrl+K or "/". Without this the
+              palette's whole feature set was unreachable on a phone. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="min-h-[44px] min-w-[44px] lg:hidden"
+            onClick={openCommandPalette}
+            aria-label="Quick actions and search"
+            title="Quick actions and search"
+          >
+            <Search className="h-5 w-5" />
+          </Button>
           <Button
             type="button"
             variant="default"

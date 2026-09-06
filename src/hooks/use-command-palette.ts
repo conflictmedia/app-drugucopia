@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDoseStore } from '@/store/dose-store'
 import { useUIStore } from '@/store/ui-store'
+import { useBackClose } from '@/hooks/use-back-close'
 import { searchSubstancesRanked, substances } from '@/lib/substances/index'
 import { generalGuides } from '@/lib/harm-reduction-data'
 import { format } from 'date-fns'
@@ -39,7 +40,9 @@ interface UseCommandPaletteOptions {
 }
 
 export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) {
-  const [open, setOpen] = useState(false)
+  // Open state is store-backed so the TopBar launcher opens the same
+  // instance this hook's keyboard shortcuts control.
+  const open = useUIStore((s) => s.commandPaletteOpen)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -49,14 +52,25 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
   const doses = useDoseStore((s) => s.doses)
 
   const openPalette = useCallback(() => {
-    setQuery('')
-    setActiveIndex(0)
-    setOpen(true)
+    useUIStore.getState().openCommandPalette()
   }, [])
 
   const closePalette = useCallback(() => {
-    setOpen(false)
+    useUIStore.getState().closeCommandPalette()
   }, [])
+
+  const setOpen = useCallback((next: boolean) => {
+    if (next) {
+      useUIStore.getState().openCommandPalette()
+    } else {
+      useUIStore.getState().closeCommandPalette()
+    }
+  }, [])
+
+  // Android back button dismisses the palette. The CommandPalette component
+  // is mounted for the whole session, so the pushed entry always gets
+  // popped cleanly on both UI and back-press closes.
+  useBackClose(open, closePalette)
 
   // Open palette on Cmd/Ctrl+K, or "/" when not focused in an input.
   // Close on Escape (handled by the input itself too).
@@ -87,6 +101,19 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [closePalette, open, openPalette])
+
+  // Reset the last search whenever the palette transitions to open — covers
+  // every entry point (shortcuts, TopBar launcher). Adjusting state during
+  // render on a change is the React-documented pattern here ("You Might Not
+  // Need an Effect"); doing it in an effect trips set-state-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open)
+  if (prevOpen !== open) {
+    setPrevOpen(open)
+    if (open) {
+      setQuery('')
+      setActiveIndex(0)
+    }
+  }
 
   // Focus input when opening.
   useEffect(() => {

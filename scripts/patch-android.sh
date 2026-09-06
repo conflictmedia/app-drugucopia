@@ -279,6 +279,18 @@ if [ -f "$MANIFEST" ]; then
   else
     ok "android:allowBackup already configured"
   fi
+
+  # ─── 1d. Soft keyboard resize mode ────────────────────────────────────────
+  # The web layer measures the keyboard via visualViewport (edge-to-edge
+  # suppresses adjustResize on API 30+), but on older versions adjustResize
+  # is what makes the window shrink. Harmless when suppressed.
+  if ! grep -q "android:windowSoftInputMode" "$MANIFEST"; then
+    info "Setting windowSoftInputMode=adjustResize"
+    sed -i 's/<activity/<activity\n            android:windowSoftInputMode="adjustResize"/' "$MANIFEST"
+    ok "Added android:windowSoftInputMode=\"adjustResize\""
+  else
+    ok "android:windowSoftInputMode already configured"
+  fi
 fi
 
 # ─── 2. Patch AndroidManifest.xml for status bar color ────────────────────────

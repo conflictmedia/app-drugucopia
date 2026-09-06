@@ -135,13 +135,16 @@ const DoseRow = memo(function DoseRow({
           </div>
         </div>
         <div className="flex gap-1 shrink-0">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(dose)} aria-label={`Edit full dose for ${dose.substanceName}`}>
+          {/* 44px on mobile (Android minimum touch target), desktop keeps
+              the compact 32px density. Delete sits next to Edit — too-small
+              targets here caused mis-taps on the destructive action. */}
+          <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8" onClick={() => onEdit(dose)} aria-label={`Edit full dose for ${dose.substanceName}`}>
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onRedose(dose)} disabled={isRedosing} aria-label={`Redose ${dose.substanceName}`}>
+          <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8" onClick={() => onRedose(dose)} disabled={isRedosing} aria-label={`Redose ${dose.substanceName}`}>
             {isRedosing ? <Loader2 className="animate-spin h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
           </Button>
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-error" onClick={() => onDelete(dose.id)} disabled={isDeleting} aria-label={`Delete ${dose.substanceName} dose`}>
+          <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8 text-error" onClick={() => onDelete(dose.id)} disabled={isDeleting} aria-label={`Delete ${dose.substanceName} dose`}>
             {isDeleting ? <Loader2 className="animate-spin h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
           </Button>
         </div>

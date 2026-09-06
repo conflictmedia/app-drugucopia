@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import { useBackClose } from "@/hooks/use-back-close"
 
 /* ─── Dialog Context ─── */
 const DialogContext = React.createContext<{
@@ -28,6 +29,11 @@ function Dialog({
   children?: React.ReactNode
 } & Omit<React.ComponentProps<"dialog">, "open" | "onClose">) {
   const dialogRef = React.useRef<HTMLDialogElement>(null)
+
+  // Android back button closes the topmost open dialog: each Dialog pushes
+  // its own history entry (see useBackClose), so stacked dialogs dismiss
+  // top-first and UI closes don't leave dead entries behind.
+  useBackClose(!!open, React.useCallback(() => onOpenChange?.(false), [onOpenChange]))
 
   React.useEffect(() => {
     const dialog = dialogRef.current
@@ -129,8 +135,12 @@ const DialogContent = React.forwardRef<
         type="button"
         aria-label="Close"
         className="btn btn-circle btn-ghost tap-sm absolute right-3 top-3 h-8 w-8 min-h-0 p-0"
-        onClick={() => {
-          const dialog = document.querySelector('dialog[open]')
+        onClick={(e) => {
+          // Scope to the dialog this content actually renders in —
+          // document.querySelector('dialog[open]') closed the FIRST open
+          // dialog on the page, which was wrong when dialogs are nested
+          // (e.g. reminder settings opening ScheduleEditor dialogs).
+          const dialog = e.currentTarget.closest('dialog')
           if (dialog instanceof HTMLDialogElement) dialog.close()
         }}
       >
@@ -204,7 +214,7 @@ function DialogOverlay({ className, ...props }: React.HTMLAttributes<HTMLDivElem
     <div
       className={cn("modal-backdrop", className)}
       onClick={(e) => {
-        const dialog = document.querySelector('dialog[open]')
+        const dialog = e.currentTarget.closest('dialog')
         if (dialog instanceof HTMLDialogElement) dialog.close()
       }}
       {...props}

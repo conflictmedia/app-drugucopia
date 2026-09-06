@@ -162,7 +162,7 @@ function DropdownMenuContent({
       role="menu"
       aria-orientation="vertical"
       className={cn(
-        "dropdown-content absolute z-50 min-w-[8rem] overflow-hidden rounded-md border border-base-300 bg-base-100 p-1 shadow-md",
+        "dropdown-content absolute z-50 min-w-[8rem] max-h-[70dvh] overflow-y-auto rounded-md border border-base-300 bg-base-100 p-1 shadow-md",
         align === "end" && "right-0",
         align === "start" && "left-0",
         className

@@ -31,7 +31,6 @@ export function BottomSheet({
   footer,
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null)
-  const dragHandleRef = useRef<HTMLDivElement>(null)
   const [dragY, setDragY] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const startYRef = useRef(0)
@@ -40,14 +39,13 @@ export function BottomSheet({
     onClose()
   }, [onClose])
 
+  // Dragging is bound to the full-width header strip around the pill, not
+  // the pill itself — a 4px-tall gesture target was nearly impossible to
+  // hit. touch-action:none keeps the strip from scrolling the page mid-drag.
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    // Only start dragging if touch is on the drag handle
-    const target = e.target as HTMLElement
-    if (showDragHandle && dragHandleRef.current?.contains(target)) {
-      startYRef.current = e.touches[0].clientY
-      setIsDragging(true)
-    }
-  }, [showDragHandle])
+    startYRef.current = e.touches[0].clientY
+    setIsDragging(true)
+  }, [])
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     if (!isDragging) return
@@ -99,14 +97,15 @@ export function BottomSheet({
           >
             {showDragHandle && (
               <div
-                ref={dragHandleRef}
-                className="bottom-sheet-drag"
-                aria-hidden="true"
+                className="flex min-h-[44px] w-full items-center justify-center touch-none"
+                role="presentation"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
                 onTouchCancel={handleTouchEnd}
-              />
+              >
+                <div className="bottom-sheet-drag" aria-hidden="true" />
+              </div>
             )}
 
             {showCloseButton && (

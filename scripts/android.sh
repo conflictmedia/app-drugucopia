@@ -624,12 +624,16 @@ EOF
 }
 install_kotlin_helpers
 
-# ── Ensure Android Auto Backup is disabled on the generated manifest ──────
-# The webview localStorage holds plaintext dose history and sync credentials;
-# Auto Backup would upload them to the user's Google Drive. patch-android.sh
-# sets this on fresh inits, but the full patch is skipped on existing trees,
-# so enforce it here on every build.
-ensure_allow_backup() {
+# ── Manifest flags the generated template lacks ───────────────────────────
+# 1. allowBackup=false: the webview localStorage holds plaintext dose history
+#    and sync credentials; Auto Backup would upload them to the user's Google
+#    Drive. patch-android.sh sets this on fresh inits, but the full patch is
+#    skipped on existing trees, so enforce it here on every build.
+# 2. adjustResize: lets the window shrink for the soft keyboard on Android
+#    versions where edge-to-edge doesn't already suppress it (the web layer
+#    measures the keyboard via visualViewport and handles the edge-to-edge
+#    case itself — see LayoutClient's --kb-height).
+ensure_manifest_flags() {
   local manifest="$GEN_ANDROID_DIR/app/src/main/AndroidManifest.xml"
   [ -f "$manifest" ] || die "AndroidManifest.xml not found at $manifest"
   if ! grep -q "android:allowBackup" "$manifest"; then
@@ -638,8 +642,14 @@ ensure_allow_backup() {
   else
     ok "android:allowBackup already configured"
   fi
+  if ! grep -q "android:windowSoftInputMode" "$manifest"; then
+    sed -i 's/<activity/<activity\n            android:windowSoftInputMode="adjustResize"/' "$manifest"
+    ok "Set android:windowSoftInputMode=\"adjustResize\""
+  else
+    ok "android:windowSoftInputMode already configured"
+  fi
 }
-ensure_allow_backup
+ensure_manifest_flags
 
 verify_release_apk_helpers() {
   local apk dex_dump found=0

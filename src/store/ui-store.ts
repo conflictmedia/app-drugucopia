@@ -11,6 +11,13 @@ interface UIState {
   openDoseLogger: (preselect?: UIState["doseLoggerPreselect"]) => void;
   closeDoseLogger: () => void;
 
+  // Command palette open state. Lives here rather than in useCommandPalette's
+  // local state so the TopBar launcher button, Ctrl+K and "/" all drive the
+  // same surface.
+  commandPaletteOpen: boolean;
+  openCommandPalette: () => void;
+  closeCommandPalette: () => void;
+
   // Onboarding tour state. The tour auto-opens on first visit (when
   // localStorage flag `drugucopia-tour-complete` is unset) and can be
   // re-triggered from the Help menu / Ctrl+Shift+O keyboard shortcut.
@@ -79,6 +86,14 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   closeDoseLogger: () => {
     set({ doseLoggerOpen: false, doseLoggerPreselect: undefined });
+  },
+
+  commandPaletteOpen: false,
+  openCommandPalette: () => {
+    set({ commandPaletteOpen: true });
+  },
+  closeCommandPalette: () => {
+    set({ commandPaletteOpen: false });
   },
 
   // Onboarding tour state. Auto-opens on first visit; can be re-triggered

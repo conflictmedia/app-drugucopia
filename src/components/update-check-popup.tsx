@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { X, Github, ArrowUpRight, Bell } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isTauri } from '@/lib/tauri-bridge'
+import { useBackClose } from '@/hooks/use-back-close'
 
 // Suppression is intentionally SESSION-scoped (sessionStorage, not
 // localStorage): a fresh app launch starts a new browsing session, so the
@@ -47,6 +48,11 @@ export function UpdateCheckPopup({
     setIsOpen(false)
     setLastCheckTime(Date.now())
   }
+
+  // This component stays mounted for the whole session, so the Android back
+  // button can dismiss the popup. Back maps to the "Later" (snooze) path —
+  // pressing back shouldn't mark the update as seen.
+  useBackClose(isOpen, handleLater)
 
   const handleOpenGithub = async (event: MouseEvent<HTMLAnchorElement>) => {
     // A normal target="_blank" link stays inside the Android WebView. Use

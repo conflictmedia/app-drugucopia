@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo, Suspense } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import {
   Shuffle,
   AlertTriangle,
@@ -12,7 +12,9 @@ import { InteractionSubstanceSelector } from '@/components/interaction-substance
 import { InteractionResults } from '@/components/interaction-results'
 import { checkInteractions, checkSingleSubstanceInteractions } from '@/lib/interaction-checker'
 import type { InteractionCheckResult } from '@/lib/interaction-checker'
-import { PullToRefresh } from '@/components/ui/PullToRefresh'
+// No pull-to-refresh: the page is fully reactive (interaction checks run on
+// selection change) and router.refresh() is a no-op in the static export —
+// the gesture previously showed a spinner and haptic feedback for nothing.
 
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
 
@@ -26,11 +28,6 @@ export default function InteractionsPage() {
 
 function InteractionsPageInner() {
   const searchParams = useSearchParams()
-  const router = useRouter()
-
-  const handleRefresh = useCallback(async () => {
-    router.refresh()
-  }, [router])
 
   // Lazy initialization - parse URL params once on mount
   const [selectedIds, setSelectedIds] = useState<string[]>(() => {
@@ -72,10 +69,9 @@ function InteractionsPageInner() {
   }, [])
 
   return (
-    <PullToRefresh onRefresh={handleRefresh} threshold={60}>
-      <div className="min-h-screen flex flex-col">
-        {/* ── Unified Responsive Content ── */}
-        <div className="flex-1 overflow-y-auto safe-area-pb-min">
+    <div className="min-h-screen flex flex-col">
+      {/* ── Unified Responsive Content ── */}
+      <div className="flex-1 overflow-y-auto safe-area-pb-min">
           {/* Hero */}
           <div className="px-4 pt-4 pb-3 border-b border-base-300/70 md:px-0 md:border-none md:py-6 lg:py-10">
             <div className="mx-auto max-w-5xl">
@@ -155,7 +151,6 @@ function InteractionsPageInner() {
           </div>
         </div>
       </div>
-    </PullToRefresh>
   )
 }
 
