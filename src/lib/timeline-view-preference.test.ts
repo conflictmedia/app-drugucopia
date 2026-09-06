@@ -33,9 +33,15 @@ describe('timeline-view-preference', () => {
     })
 
     it('falls back to cards when localStorage throws (private mode)', () => {
-      const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-        throw new Error('blocked')
-      })
+      // Spy on the prototype of the actual storage object: jsdom's
+      // window.localStorage is not an instance of Node's global Storage
+      // class, so a `Storage.prototype` spy would target the wrong class,
+      // and instance-level spies don't intercept here.
+      const spy = vi
+        .spyOn(Object.getPrototypeOf(window.localStorage), 'getItem')
+        .mockImplementation(() => {
+          throw new Error('blocked')
+        })
       expect(readTimelineViewPreference()).toBe('cards')
       expect(spy).toHaveBeenCalled()
     })

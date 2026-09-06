@@ -16,6 +16,12 @@ export default defineConfig({
       "**/*.spec.ts",
       "**/*.spec.tsx",
     ],
+    // Node ≥26 makes its webstorage (Storage/localStorage) unavailable
+    // without a persistence file, and current jsdom defers to the host —
+    // so window.localStorage is undefined in tests otherwise. Point the
+    // flag at a throwaway gitignored file to restore a working Storage
+    // for tests like timeline-view-preference.
+    execArgv: ["--localstorage-file", ".vitest-localstorage"],
   },
   resolve: {
     alias: {

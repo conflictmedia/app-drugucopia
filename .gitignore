@@ -66,3 +66,6 @@ dev.log
 test
 server.log
 
+
+# vitest webstorage backing file
+.vitest-localstorage*
