@@ -592,6 +592,12 @@ export function IntensityTimelineChart() {
     setSelectedRoutes(prev => ({ ...prev, [groupKey]: null }))
   }, [])
 
+  // Stable so GroupCard's memo isn't defeated by fresh inline closures on
+  // every parent render (each minute tick re-rendered every GroupCard).
+  const toggleExpandedGroup = useCallback((groupKey: string) => {
+    setExpandedGroup(prev => (prev === groupKey ? null : groupKey))
+  }, [])
+
   if (!isLoaded) {
     return (
       <Card>
@@ -736,10 +742,10 @@ export function IntensityTimelineChart() {
           getCategoryColor={getCategoryColor}
           selectedRoute={selectedRoutes[group.key] ?? null}
           selectedDose={selectedDoses[group.key] ?? null}
-          onRouteClick={(route) => handleRouteClick(group.key, route)}
-          onDoseClick={(doseId) => handleDoseChipClick(group.key, doseId)}
+          onRouteClick={handleRouteClick}
+          onDoseClick={handleDoseChipClick}
           isExpanded={expandedGroup === group.key}
-          onToggleExpand={() => setExpandedGroup(prev => prev === group.key ? null : group.key)}
+          onToggleExpand={toggleExpandedGroup}
           nowTs={nowTs}
           windowHours={windowHours}
         />
@@ -756,10 +762,12 @@ interface GroupCardProps {
   getCategoryColor: (cats: string[]) => string
   selectedRoute: string | null
   selectedDose: string | null
-  onRouteClick: (route: string) => void
-  onDoseClick: (doseId: string) => void
+  // Callbacks take the group key so the parent can pass stable references —
+  // inline closures here would defeat the memo below on every parent render.
+  onRouteClick: (groupKey: string, route: string) => void
+  onDoseClick: (groupKey: string, doseId: string) => void
   isExpanded: boolean
-  onToggleExpand: () => void
+  onToggleExpand: (groupKey: string) => void
   /** Current time in ms — passed from parent so the 60s tick re-renders
    *  the now-line / phase badges WITHOUT recomputing chart data. */
   nowTs: number
@@ -1002,7 +1010,7 @@ const GroupCard = memo(function GroupCard({
               return (
                 <button
                   key={rg.route}
-                  onClick={() => onRouteClick(rg.route.toLowerCase())}
+                  onClick={() => onRouteClick(group.key, rg.route.toLowerCase())}
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${isSelected ? 'ring-1 ring-offset-1 ring-offset-background' : 'opacity-60 hover:opacity-100'}`}
                   style={{ borderColor: palette.stroke, color: palette.stroke }}
                 >
@@ -1012,7 +1020,7 @@ const GroupCard = memo(function GroupCard({
               )
             })}
             {selectedRoute && (
-              <button onClick={() => onRouteClick(selectedRoute)} className="text-[10px] text-neutral-content hover:text-base-content ml-1">
+              <button onClick={() => onRouteClick(group.key, selectedRoute)} className="text-[10px] text-neutral-content hover:text-base-content ml-1">
                 Show all
               </button>
             )}
@@ -1034,7 +1042,7 @@ const GroupCard = memo(function GroupCard({
               return (
                 <button
                   key={`${rg.route}-${doseId}`}
-                  onClick={() => onDoseClick(doseId)}
+                  onClick={() => onDoseClick(group.key, doseId)}
                   className={`relative inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border transition-all overflow-hidden ${isIsolated
                     ? 'ring-2 ring-purple-500/50 border-purple-500/50 bg-purple-500/10'
                     : isDoseEnded
@@ -1054,7 +1062,7 @@ const GroupCard = memo(function GroupCard({
             })
           })}
           {selectedDose && (
-            <button onClick={() => onDoseClick(selectedDose)} className="text-[10px] text-neutral-content hover:text-base-content ml-1">
+            <button onClick={() => onDoseClick(group.key, selectedDose)} className="text-[10px] text-neutral-content hover:text-base-content ml-1">
               Show all
             </button>
           )}
@@ -1460,7 +1468,7 @@ const GroupCard = memo(function GroupCard({
             >
               <Download className="h-3 w-3" />
             </button>
-            <button onClick={onToggleExpand} className="flex items-center gap-1 hover:text-base-content transition-colors">
+            <button onClick={() => onToggleExpand(group.key)} className="flex items-center gap-1 hover:text-base-content transition-colors">
               {isExpanded ? (
                 <><ChevronUp className="h-3 w-3" /> Less</>
               ) : (

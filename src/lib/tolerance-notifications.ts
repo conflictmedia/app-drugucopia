@@ -461,6 +461,11 @@ export async function checkAndNotify(
 // ─── Public API ────────────────────────────────────────────────────────────────
 
 export function startToleranceNotifications(): void {
+  // Runtime-reactive settings subscription (registered once, kept for the
+  // module lifetime): previously a disabled engine never started this
+  // session and a cadence change needed an app restart to apply.
+  ensureToleranceSettingsSubscription();
+
   if (intervalId) return;
 
   const settings = useToleranceNotificationStore.getState().settings;
@@ -479,6 +484,43 @@ export function startToleranceNotifications(): void {
   intervalId = setInterval(() => {
     checkAndNotify();
   }, intervalMs);
+}
+
+// Flips the engine to match settings changes: re-enabling starts it,
+// disabling drops the timer (but keeps this subscription so re-enabling
+// needs no restart), and a cadence change restarts the timer in place.
+let settingsUnsub: (() => void) | null = null;
+
+function ensureToleranceSettingsSubscription(): void {
+  if (settingsUnsub) return;
+  try {
+    settingsUnsub = useToleranceNotificationStore.subscribe((state, prev) => {
+      if (!prev) return;
+      const { enabled, checkIntervalMinutes } = state.settings;
+      if (
+        enabled === prev.settings.enabled &&
+        checkIntervalMinutes === prev.settings.checkIntervalMinutes
+      ) {
+        return;
+      }
+      if (!enabled) {
+        // Full stop (clears priming state too) — but this subscription stays
+        // registered so re-enabling needs no app restart.
+        stopToleranceNotifications();
+        return;
+      }
+      if (!intervalId) {
+        startToleranceNotifications();
+      } else if (checkIntervalMinutes !== prev.settings.checkIntervalMinutes) {
+        clearInterval(intervalId);
+        intervalId = setInterval(() => {
+          checkAndNotify();
+        }, checkIntervalMinutes * 60_000);
+      }
+    });
+  } catch (e) {
+    console.warn("[tolerance-notif] could not subscribe to settings", e);
+  }
 }
 
 export function stopToleranceNotifications(): void {

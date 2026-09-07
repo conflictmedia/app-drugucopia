@@ -1,16 +1,8 @@
 'use client'
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
-import {
-  getFirestore,
-  initializeFirestore,
-  type Firestore,
-  doc,
-  onSnapshot,
-  setDoc,
-  serverTimestamp,
-} from 'firebase/firestore'
+import type { FirebaseApp } from 'firebase/app'
+import type { Firestore } from 'firebase/firestore'
 import { toast } from '../hooks/use-toast'
 import { useDoseStore } from '../store/dose-store'
 import { useReminderStore } from '../store/reminder-store'
@@ -55,41 +47,59 @@ export function getFirebaseConfigDebug(): Record<string, boolean> {
   }
 }
 
-// Lazy-initialize Firebase so the app doesn't crash if env vars are missing.
-// getDb() returns null when Firebase can't be initialized, and every caller
-// checks for null before proceeding — no TypeScript "Firestore | null" error.
+// Lazy-load Firebase: the Firestore SDK (~492 KB minified) previously sat in
+// the shell bundle, parsed on every app start even for users who never
+// enable sync. Now it is fetched on the first actual sync call.
+// The returned promise resolves null when Firebase can't be initialized, and
+// every caller checks for null before proceeding. A failed load resets the
+// cached promise so a later call can retry.
+type FirestoreModule = typeof import('firebase/firestore')
+
+interface FirestoreBundle {
+  app: FirebaseApp
+  db: Firestore
+  fs: FirestoreModule
+}
+
 let _app: FirebaseApp | null = null
-let _db: Firestore | null = null
+let _firestorePromise: Promise<FirestoreBundle | null> | null = null
 
-function getDb(): Firestore | null {
-  if (_db) return _db
-  const missing = getMissingFirebaseKeys()
-  if (missing.length > 0) {
-    console.warn('[sync] Firebase misconfigured - missing:', missing.join(', '), 'config present:', getFirebaseConfigDebug())
-    return null
-  }
-  try {
-    _app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
+function loadFirestore(): Promise<FirestoreBundle | null> {
+  if (!_firestorePromise) {
+    _firestorePromise = (async (): Promise<FirestoreBundle | null> => {
+      const missing = getMissingFirebaseKeys()
+      if (missing.length > 0) {
+        console.warn('[sync] Firebase misconfigured - missing:', missing.join(', '), 'config present:', getFirebaseConfigDebug())
+        return null
+      }
+      try {
+        const appMod = await import('firebase/app')
+        const fs = await import('firebase/firestore')
+        _app = appMod.getApps().length ? appMod.getApps()[0] : appMod.initializeApp(firebaseConfig)
 
-    // Android's production WebView can fail to establish Firestore's
-    // WebChannel stream even though the same app works in development. Use
-    // HTTP long-polling for Tauri builds; it is more reliable on mobile
-    // networks and avoids the 30-second "no response" timeout. Keep the
-    // default transport in browsers and desktop web builds.
-    _db = isTauri()
-      ? initializeFirestore(_app, {
-        experimentalAutoDetectLongPolling: true,
-      })
-      : getFirestore(_app)
-    console.debug(
-      '[sync] Firebase initialized successfully, project:', firebaseConfig.projectId,
-      'transport:', isTauri() ? 'long-polling' : 'default',
-    )
-    return _db
-  } catch (e) {
-    console.warn('Firebase initialization failed', e, 'config presence:', getFirebaseConfigDebug())
-    return null
+        // Android's production WebView can fail to establish Firestore's
+        // WebChannel stream even though the same app works in development. Use
+        // HTTP long-polling for Tauri builds; it is more reliable on mobile
+        // networks and avoids the 30-second "no response" timeout. Keep the
+        // default transport in browsers and desktop web builds.
+        const db = isTauri()
+          ? fs.initializeFirestore(_app, {
+            experimentalAutoDetectLongPolling: true,
+          })
+          : fs.getFirestore(_app)
+        console.debug(
+          '[sync] Firebase initialized successfully, project:', firebaseConfig.projectId,
+          'transport:', isTauri() ? 'long-polling' : 'default',
+        )
+        return { app: _app, db, fs }
+      } catch (e) {
+        console.warn('Firebase initialization failed', e, 'config presence:', getFirebaseConfigDebug())
+        _firestorePromise = null // allow a later call to retry
+        return null
+      }
+    })()
   }
+  return _firestorePromise
 }
 const SYNC_AUTH_KEY = 'drugucopia-sync-auth'
 // D3 — Split credential storage:
@@ -724,11 +734,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       console.debug('[sync] pushToSync skipped — guards:', guard)
       return
     }
-    const db = getDb()
-    if (!db) {
-      console.debug('[sync] pushToSync skipped — no db')
-      return
-    }
 
     // Rate-limit: enforce minimum interval between Firestore writes
     // Can be bypassed for manual "Force Sync" (but not for concurrent pushes)
@@ -751,6 +756,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     isPushingRef.current = true
     console.debug('[sync] pushToSync starting — writing to secure_rooms/' + hashedRoomRef.current)
     try {
+      // Load the Firestore SDK on first use (see loadFirestore note). This
+      // happens after isPushingRef is set, so concurrent pushes during the
+      // import await hit the reschedule path above instead of racing.
+      const fb = await loadFirestore()
+      if (!fb) {
+        console.debug('[sync] pushToSync skipped — no db')
+        return
+      }
+      const { doc, setDoc, serverTimestamp } = fb.fs
+      const db = fb.db
+
       const currentDoses = dosesRef.current
       const currentDeleted = deletedIdsRef.current
       const currentSchedules = schedulesRef.current
@@ -1004,8 +1020,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // `if (!initialSyncDoneRef.current)` block inside processSnapshot.
       initialSyncDoneRef.current = false
 
-      const db = getDb()
-      if (!db) {
+      const fb = await loadFirestore()
+      if (!fb) {
         const missing = getMissingFirebaseKeys()
         const debug = getFirebaseConfigDebug()
         console.error('[sync] Firebase not configured, missing:', missing, 'present:', debug)
@@ -1019,6 +1035,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         })
         return
       }
+      const { doc, onSnapshot } = fb.fs
+      const db = fb.db
 
       const docRef = doc(db, 'secure_rooms', hashedRoomRef.current)
 

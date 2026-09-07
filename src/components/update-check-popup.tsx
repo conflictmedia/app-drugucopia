@@ -1,11 +1,15 @@
 'use client'
 
 import { useState, type MouseEvent } from 'react'
-import ReactMarkdown from 'react-markdown'
+import dynamic from 'next/dynamic'
 import { X, Github, ArrowUpRight, Bell } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isTauri } from '@/lib/tauri-bridge'
 import { useBackClose } from '@/hooks/use-back-close'
+
+// Keep react-markdown (+remark) out of the shell bundle — see
+// changelog-popup.tsx. This popup only renders markdown while open.
+const ReactMarkdown = dynamic(() => import('react-markdown'), { ssr: false })
 
 // Suppression is intentionally SESSION-scoped (sessionStorage, not
 // localStorage): a fresh app launch starts a new browsing session, so the

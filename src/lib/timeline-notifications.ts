@@ -211,6 +211,41 @@ function safeParseDurationToMinutes(val: unknown): number {
   return 0;
 }
 
+// ─── Hot-path cache for the 30 s scan ──────────────────────────────────────
+// checkAndUpdate iterates the full dose history every 30 s. Regex-parsing
+// the same duration strings on every pass is wasted work — identical
+// duration values always produce identical results, so cache per serialized
+// duration. Distinct durations are few in practice; trim defensively.
+interface DurationCacheEntry {
+  totalMins: number;
+  timings: ReturnType<typeof calculatePhaseTimings> | null;
+}
+const durationParseCache = new Map<string, DurationCacheEntry>();
+
+function cachedDurationEntry(duration: NonNullable<DoseLog["duration"]>): DurationCacheEntry | null {
+  const key = `${duration.onset ?? ""}|${duration.comeup ?? ""}|${duration.peak ?? ""}|${duration.offset ?? ""}|${duration.total ?? ""}`;
+  let entry = durationParseCache.get(key);
+  if (entry === undefined) {
+    const totalMins = safeParseDurationToMinutes(duration.total);
+    entry = {
+      totalMins,
+      timings: totalMins > 0 ? calculatePhaseTimings(duration) : null,
+    };
+    durationParseCache.set(key, entry);
+    if (durationParseCache.size > 500) {
+      const oldest = durationParseCache.keys().next().value;
+      if (oldest !== undefined) durationParseCache.delete(oldest);
+    }
+  }
+  return entry;
+}
+
+// Doses older than this cannot plausibly be active any more. Lets the 30 s
+// scan skip years of history with one Date.parse per dose instead of
+// duration parsing. Generous (a year) so no real declared duration can
+// outlive it.
+const MAX_ACTIVE_HORIZON_MINS = 366 * 24 * 60;
+
 /** Check if we can send a notification for this substance (cooldown + spam protection) */
 function canSendNotification(
   key: string,
@@ -520,14 +555,18 @@ async function checkAndUpdate(force = false): Promise<void> {
 
     for (const dose of doses) {
       if (!dose.duration) continue;
-      const totalMins = safeParseDurationToMinutes(dose.duration.total);
-      if (totalMins <= 0) continue;
 
       const doseTime = new Date(dose.timestamp).getTime();
       const elapsedMins = (now - doseTime) / 60_000;
       if (elapsedMins < 0) continue;
+      // Cheap age cutoff BEFORE any duration parsing — the scan runs over
+      // the whole history, and almost all of it is long-ended doses.
+      if (elapsedMins > MAX_ACTIVE_HORIZON_MINS) continue;
 
-      const timings = calculatePhaseTimings(dose.duration);
+      const cached = cachedDurationEntry(dose.duration);
+      if (!cached || cached.totalMins <= 0) continue;
+
+      const timings = cached.timings;
       if (!timings || timings.totalDuration <= 0) continue;
       const isEnded = elapsedMins >= timings.offsetEnd;
 
@@ -677,6 +716,13 @@ async function checkAndUpdate(force = false): Promise<void> {
  * Subscribes to dose store so new doses trigger immediate notification check.
  */
 export function startTimelineNotifications(): void {
+  // Runtime-reactive settings subscription (registered once, kept for the
+  // module lifetime): previously an engine disabled in Settings never
+  // started this session, and re-enabling needed an app restart. Other
+  // settings (cooldown, toggles) are re-read by checkAndUpdate on every
+  // pass, so only `enabled` needs this treatment.
+  ensureTimelineSettingsSubscription();
+
   if (intervalId) return;
 
   // Check if enabled before starting
@@ -887,6 +933,29 @@ export function stopTimelineNotifications(): void {
   if (visibilityHandler) {
     document.removeEventListener("visibilitychange", visibilityHandler);
     visibilityHandler = null;
+  }
+}
+
+// Flips the engine on/off when Settings toggles `enabled` at runtime.
+// Registered once on the first start attempt and kept for the module
+// lifetime — stop() deliberately does NOT remove it, so re-enabling
+// restarts the engine without an app restart.
+let settingsUnsub: (() => void) | null = null;
+
+function ensureTimelineSettingsSubscription(): void {
+  if (settingsUnsub) return;
+  try {
+    settingsUnsub = useTimelineNotificationStore.subscribe((state, prev) => {
+      if (!prev) return;
+      if (state.settings.enabled === prev.settings.enabled) return;
+      if (state.settings.enabled) {
+        startTimelineNotifications();
+      } else {
+        stopTimelineNotifications();
+      }
+    });
+  } catch (e) {
+    console.warn("[timeline-notif] could not subscribe to settings", e);
   }
 }
 

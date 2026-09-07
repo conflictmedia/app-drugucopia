@@ -3,9 +3,15 @@
 import { useEffect, useState } from 'react'
 import { X, Sparkles, Github } from 'lucide-react'
 import Link from 'next/link'
-import ReactMarkdown from 'react-markdown'
+import dynamic from 'next/dynamic'
 import { cn } from '@/lib/utils'
 import { useBackClose } from '@/hooks/use-back-close'
+
+// react-markdown (+remark stack) is a sizable chunk; the popup only renders
+// markdown while open, so keep it out of the shell bundle parsed on every
+// app start. The popup itself is mounted at the root layout, but renders
+// null until shown — dynamic() defers the chunk until first open.
+const ReactMarkdown = dynamic(() => import('react-markdown'), { ssr: false })
 
 const STORAGE_KEY = 'drugucopia-last-seen-version'
 

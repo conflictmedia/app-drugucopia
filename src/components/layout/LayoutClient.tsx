@@ -103,10 +103,13 @@ export function LayoutClient({ children }: LayoutClientProps) {
   }, [showOnboardingTour])
 
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768)
+    // matchMedia fires only when the breakpoint is crossed — a resize
+    // listener re-rendered the whole shell on every pixel of rotation.
+    const mq = window.matchMedia('(max-width: 767px)')
+    const checkMobile = () => setIsMobile(mq.matches)
     checkMobile()
-    window.addEventListener('resize', checkMobile)
-    return () => window.removeEventListener('resize', checkMobile)
+    mq.addEventListener('change', checkMobile)
+    return () => mq.removeEventListener('change', checkMobile)
   }, [])
 
   // ── Soft-keyboard height → --kb-height CSS variable ──

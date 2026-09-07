@@ -5,8 +5,12 @@ import { useRouter } from 'next/navigation'
 import { useDoseStore } from '@/store/dose-store'
 import { useUIStore } from '@/store/ui-store'
 import { useBackClose } from '@/hooks/use-back-close'
-import { searchSubstancesRanked, substances } from '@/lib/substances/index'
-import { generalGuides } from '@/lib/harm-reduction-data'
+import {
+  loadSubstances,
+  loadHarmReductionGuides,
+  type SubstancesModule,
+  type HarmReductionModule,
+} from '@/lib/substances-lazy'
 import { format } from 'date-fns'
 import {
   Search,
@@ -50,6 +54,28 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
   const router = useRouter()
 
   const doses = useDoseStore((s) => s.doses)
+
+  // Substance DB + harm-reduction corpus load on demand (they're the two
+  // biggest chunks in the app). Quick actions render instantly; substance
+  // and guide results appear once the chunks land — cached after that.
+  const [dataMods, setDataMods] = useState<{
+    subs: SubstancesModule | null
+    guides: HarmReductionModule | null
+  }>({ subs: null, guides: null })
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    loadSubstances().then((subs) => {
+      if (!cancelled) setDataMods((prev) => ({ ...prev, subs }))
+    })
+    loadHarmReductionGuides().then((guides) => {
+      if (!cancelled) setDataMods((prev) => ({ ...prev, guides }))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   const openPalette = useCallback(() => {
     useUIStore.getState().openCommandPalette()
@@ -202,9 +228,10 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
     }
 
     // Substances — only search when there's a query (otherwise the list
-    // is huge and not useful in a palette context).
-    if (query) {
-      const subs = searchSubstancesRanked(query, { limit: 6 })
+    // is huge and not useful in a palette context). Results appear once
+    // the substance chunk has loaded; nothing before that.
+    if (query && dataMods.subs) {
+      const subs = dataMods.subs.searchSubstancesRanked(query, { limit: 6 })
       for (const r of subs) {
         const s = r.substance
         out.push({
@@ -242,8 +269,8 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
     }
 
     // Harm reduction guides — match title + content
-    if (query) {
-      const guideMatches = generalGuides
+    if (query && dataMods.guides) {
+      const guideMatches = dataMods.guides.generalGuides
         .filter(
           (g) =>
             g.title.toLowerCase().includes(query) ||
@@ -263,7 +290,7 @@ export function useCommandPalette({ openDoseLogger }: UseCommandPaletteOptions) 
     }
 
     return out.slice(0, 20)
-  }, [query, doses])
+  }, [query, doses, dataMods])
 
   const activate = useCallback(
     (r?: PaletteResult) => {

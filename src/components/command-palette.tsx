@@ -5,8 +5,6 @@ import { Search, Plus, Activity, Shield, Wine, CornerDownLeft, ChevronUp, Chevro
 import { useRouter } from 'next/navigation'
 import { useDoseStore } from '@/store/dose-store'
 import { useUIStore } from '@/store/ui-store'
-import { searchSubstancesRanked, substances } from '@/lib/substances/index'
-import { generalGuides } from '@/lib/harm-reduction-data'
 import { format } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { useCommandPalette } from '@/hooks/use-command-palette'

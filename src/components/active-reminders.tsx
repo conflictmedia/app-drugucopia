@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useMemo, memo } from 'react'
+import { useMemo, memo } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Bell, BellRing, Clock, Timer, X, Coffee, AlarmClock } from 'lucide-react'
 import { useReminderStore } from '@/store/reminder-store'
 import { formatRemainingTime } from '@/lib/notification-utils'
+import { useNowClock } from '@/hooks/use-now-clock'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { ActiveReminder } from '@/types'
 
@@ -14,10 +15,11 @@ import type { ActiveReminder } from '@/types'
 // Shows above/below the ActiveDosesTimeline in the sidebar and in the mobile timeline tab.
 //
 // Performance notes:
-//   - Each RunningReminderItem / SnoozedReminderItem owns its own 1s interval
-//     so the parent only re-renders when the reminder LIST changes (add/remove/
-//     status change), not on every tick. Previously a single parent-level tick
-//     re-rendered the entire card (and every motion.div inside it) every second,
+//   - Items are memo'd and pull time from the shared useNowClock() 1 Hz
+//     store, so only the item subscribing re-renders on a tick — the parent
+//     only re-renders when the reminder LIST changes (add/remove/status
+//     change). Previously a single parent-level tick re-rendered the entire
+//     card (and every motion.div inside it) every second,
 //     even fired reminders that don't have a live countdown.
 //   - FiredReminderItem is fully memoized - it only depends on the reminder +
 //     schedule + stable callbacks, so it never re-renders on the per-second tick.
@@ -105,14 +107,9 @@ interface RunningReminderItemProps extends ItemCallbacks {
 const RunningReminderItem = memo(function RunningReminderItem({
   reminder, onDismiss,
 }: RunningReminderItemProps) {
-  // Each running reminder owns its own 1s tick - the parent doesn't tick at all.
-  // This means a 20-reminder list won't cascade 20 re-renders every second; only
-  // each item re-renders itself, and fired/snoozed siblings stay untouched.
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1_000)
-    return () => clearInterval(id)
-  }, [])
+  // Countdowns share one module-level 1 Hz clock (useNowClock) instead of
+  // one setInterval per item — subscribers still re-render individually.
+  const now = useNowClock()
 
   const remaining = new Date(reminder.firesAt).getTime() - now
   const progress = Math.max(
@@ -176,12 +173,8 @@ interface SnoozedReminderItemProps extends ItemCallbacks {
 const SnoozedReminderItem = memo(function SnoozedReminderItem({
   reminder, onDismiss,
 }: SnoozedReminderItemProps) {
-  // Owns its own 1s tick so the parent doesn't have to.
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1_000)
-    return () => clearInterval(id)
-  }, [])
+  // Shares the module-level 1 Hz clock (useNowClock).
+  const now = useNowClock()
 
   const remaining = reminder.snoozedUntil
     ? new Date(reminder.snoozedUntil).getTime() - now
@@ -321,11 +314,7 @@ export function ActiveReminders() {
 const MobileRunningReminderItem = memo(function MobileRunningReminderItem({
   reminder, onDismiss,
 }: RunningReminderItemProps) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1_000)
-    return () => clearInterval(id)
-  }, [])
+  const now = useNowClock()
 
   const remaining = new Date(reminder.firesAt).getTime() - now
   const progress = Math.max(
@@ -380,11 +369,7 @@ const MobileRunningReminderItem = memo(function MobileRunningReminderItem({
 const MobileSnoozedReminderItem = memo(function MobileSnoozedReminderItem({
   reminder, onDismiss,
 }: SnoozedReminderItemProps) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1_000)
-    return () => clearInterval(id)
-  }, [])
+  const now = useNowClock()
 
   const remaining = reminder.snoozedUntil
     ? new Date(reminder.snoozedUntil).getTime() - now

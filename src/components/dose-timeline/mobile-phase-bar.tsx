@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { format, addMinutes } from 'date-fns'
 import { EnrichedDose, PhaseStatus, SubstanceGroup, LifecyclePhase } from './dose-timeline-types'
 import {
@@ -236,12 +236,9 @@ export function MobilePhaseBar({ group, className = '' }: MobilePhaseBarProps) {
   /* ---- Touch-to-inspect state ---- */
   const [touchInspect, setTouchInspect] = useState<TouchInspect | null>(null)
 
-  const handleTouch = useCallback(
-    (e: React.TouchEvent<SVGSVGElement>) => {
-      if (!e.touches.length) return
-      const svg = e.currentTarget
-      const rect = svg.getBoundingClientRect()
-      const touchX = e.touches[0].clientX - rect.left
+  const computeTouchInspect = useCallback(
+    (clientX: number, rect: DOMRect) => {
+      const touchX = clientX - rect.left
 
       // Map touch X → progress 0–100
       const rawProgress =
@@ -284,6 +281,36 @@ export function MobilePhaseBar({ group, className = '' }: MobilePhaseBarProps) {
       })
     },
     [primaryDose, group],
+  )
+
+  // rAF-throttled: touchmove fires far more often than frames, and the old
+  // handler ran getBoundingClientRect + a full state update (re-rendering
+  // the whole bar) on every move event.
+  const touchRafRef = useRef<number | null>(null)
+  const touchInputRef = useRef<{ clientX: number; rect: DOMRect } | null>(null)
+
+  const handleTouch = useCallback(
+    (e: React.TouchEvent<SVGSVGElement>) => {
+      if (!e.touches.length) return
+      touchInputRef.current = {
+        clientX: e.touches[0].clientX,
+        rect: e.currentTarget.getBoundingClientRect(),
+      }
+      if (touchRafRef.current !== null) return
+      touchRafRef.current = requestAnimationFrame(() => {
+        touchRafRef.current = null
+        const input = touchInputRef.current
+        if (input) computeTouchInspect(input.clientX, input.rect)
+      })
+    },
+    [computeTouchInspect],
+  )
+
+  useEffect(
+    () => () => {
+      if (touchRafRef.current !== null) cancelAnimationFrame(touchRafRef.current)
+    },
+    [],
   )
 
   const handleTouchEnd = useCallback(() => {

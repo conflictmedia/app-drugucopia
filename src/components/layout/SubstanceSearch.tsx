@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Input } from '@/components/ui/input'
-import { searchSubstancesRanked } from '@/lib/substances/index'
+import { loadSubstances, type SubstancesModule } from '@/lib/substances-lazy'
 import { cn } from '@/lib/utils'
 
 const CATEGORY_DOTS: Record<string, string> = {
@@ -85,10 +85,25 @@ export function SubstanceSearch({
 
   const debouncedQuery = useDebounce(searchQuery, 300)
 
+  // The substance DB is a multi-megabyte chunk — keep it out of the shell
+  // bundle and load it on the first real query instead. It's cached after
+  // that, and the Library page loads the same chunk on first visit.
+  const [subsMod, setSubsMod] = useState<SubstancesModule | null>(null)
+  useEffect(() => {
+    if (subsMod || !debouncedQuery.trim()) return
+    let cancelled = false
+    loadSubstances().then((mod) => {
+      if (!cancelled) setSubsMod(mod)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [debouncedQuery, subsMod])
+
   const searchResults = useMemo(() => {
-    if (!debouncedQuery.trim()) return []
-    return searchSubstancesRanked(debouncedQuery, { limit: 8 })
-  }, [debouncedQuery])
+    if (!debouncedQuery.trim() || !subsMod) return []
+    return subsMod.searchSubstancesRanked(debouncedQuery, { limit: 8 })
+  }, [debouncedQuery, subsMod])
 
   const navigateToSubstance = useCallback(
     (substanceId: string) => {
